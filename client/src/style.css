@@ -68,6 +68,14 @@ canvas#game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: b
 #target-name.friend { color: #8fd8ff; opacity: 1; }
 #target-name.enemy { color: #ff7a6b; opacity: 1; }
 
+#fuse {
+  position: absolute; left: 50%; top: calc(50% + 58px); width: 64px; height: 4px; transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.45); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55); opacity: 0;
+}
+#fuse.show { opacity: 1; }
+#fuse i { display: block; height: 100%; background: #e2b254; }
+#fuse.low i { background: #ff5b4a; }
+
 #topbar {
   position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 14px;

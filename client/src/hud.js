@@ -31,6 +31,8 @@ export class Hud {
       ammoReserve: $('ammo-reserve'),
       ammoBullets: $('ammo-bullets'),
       nades: $('nades'),
+      fuse: $('fuse'),
+      fuseFill: $('fuse-fill'),
       weaponHint: $('weapon-hint'),
       pickup: $('pickup'),
       death: $('death'),
@@ -88,6 +90,12 @@ export class Hud {
       const html = []
       for (let i = 0; i < GRENADE.count; i++) html.push(`<i${i >= n ? ' class="spent"' : ''}></i>`)
       this.el.nades.innerHTML = html.join('')
+    })
+    const fuse = ws.cooking ? Math.round(Math.max(0, 1 - ws.cookT / GRENADE.fuse) * 100) : -1
+    this.set('fuse', fuse, (v) => {
+      this.el.fuse.classList.toggle('show', v >= 0)
+      this.el.fuse.classList.toggle('low', v >= 0 && v < 30)
+      this.el.fuseFill.style.width = `${Math.max(0, v)}%`
     })
     const bkey = `${ws.id}:${a.mag}`
     this.set('bullets', bkey, () => {

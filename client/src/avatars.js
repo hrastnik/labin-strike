@@ -18,6 +18,8 @@ const SKIN = '#c49473'
 const FRIEND_TAG = '#8fd8ff'
 const GUNMETAL = '#2b2c2e'
 const STAB_TIME = KNIFE.windup + KNIFE.recover
+// crouch leg angles: [planted left, kneeling right]
+const KNEEL = [{ thigh: 1.6, knee: -1.85, ankle: 0.25 }, { thigh: 0.6, knee: -2.46, ankle: 0 }]
 
 // one template per weapon; soldiers clone it (geometry and materials shared)
 const gunTemplates = new Map()
@@ -131,8 +133,9 @@ export class Avatar {
       box(0.16, 0.46, 0.18, st.trousers, 0, -0.22, 0, thigh)
       const knee = pivot(0, -0.45, 0, thigh)
       box(0.14, 0.38, 0.16, st.trousers, 0, -0.19, 0, knee)
-      box(0.15, 0.11, 0.27, st.boots, 0, -0.43, -0.05, knee)
-      this.legs.push({ thigh, knee })
+      const ankle = pivot(0, -0.38, 0, knee)
+      box(0.15, 0.11, 0.27, st.boots, 0, -0.05, -0.05, ankle)
+      this.legs.push({ thigh, knee, ankle })
     }
     // torso
     this.torso = pivot(0, 0.94, 0, body)
@@ -303,15 +306,18 @@ export class Avatar {
     const sp = Math.min(1, this.speed / 4.5)
     this.walkPhase += dt * (3 + this.speed * 1.7) * (sp > 0.05 ? 1 : 0)
     const swing = Math.sin(this.walkPhase) * 0.65 * sp * (1 - 0.5 * cr)
-    this.hips.position.y = 0.94 - 0.4 * cr
-    this.torso.position.y = 0.94 - 0.42 * cr
+    // kneel on the right knee with the left foot planted, low enough to fill the crouched hitbox
+    this.hips.position.set(0, 0.94 - 0.48 * cr, 0.12 * cr)
+    this.torso.position.copy(this.hips.position)
     for (let i = 0; i < 2; i++) {
       const s = i === 0 ? swing : -swing
       const L = this.legs[i]
-      L.thigh.rotation.x = s - 1.15 * cr + (i === 0 ? 0.3 * cr : -0.2 * cr)
-      L.knee.rotation.x = Math.max(0, -s) * 0.9 * sp + 1.7 * cr - (i === 0 ? 0.4 * cr : 0)
+      const pose = KNEEL[i]
+      L.thigh.rotation.x = s + pose.thigh * cr
+      L.knee.rotation.x = -Math.max(0, -s) * 0.9 * sp + pose.knee * cr
+      L.ankle.rotation.x = pose.ankle * cr
     }
-    this.torso.rotation.x = -0.1 * cr - 0.08 * sp
+    this.torso.rotation.x = -0.35 * cr - 0.08 * sp
     this.aim.rotation.x = this.pitch - this.torso.rotation.x
     this.head.rotation.x = this.pitch * 0.4
     this.torso.rotation.y = Math.sin(this.walkPhase) * 0.06 * sp

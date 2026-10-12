@@ -338,6 +338,71 @@ test('bots throw through the same server path, and humans see it', () => {
   ch.disconnect()
 })
 
+// moves the clock on grenades alone, so no bot gets a turn to interfere
+function grenadesFor (ms) {
+  clock += ms
+  game.updateGrenades(ms / 1000, clock)
+}
+
+test('cooking burns the fuse from the cook message, timed by the server', () => {
+  const ch = connect('Whiskey', { team: 'allies' })
+  const p = deploy(ch, { cls: 'rifleman', primary: 'm1garand', secondary: 'm1911' })
+  const other = connect('Xray', { team: 'axis' })
+  const booms = () => ch.sent.filter(([ev, d]) => ev === 'boom' && d.id === p.id && d.k === 3).length
+  ch.send('cook', { k: 3 })
+  grenadesFor(2000)
+  ch.send('cook', { k: 9 })
+  assert.equal(p.cookK, 3, 'a second cook does not restart the fuse')
+  ch.send('nade', { o: [p.pos[0], p.pos[1] + PLAYER.eye, p.pos[2]], d: [0, 0, -1], k: 3 })
+  assert.equal(p.grenades, GRENADE.count - 1)
+  assert.equal(p.cookAt, 0)
+  assert.equal(other.last('nade').f, GRENADE.fuse * 1000 - 2000, 'others are told how much fuse is left')
+  grenadesFor(GRENADE.fuse * 1000 - 2000 - 100)
+  assert.equal(booms(), 0)
+  grenadesFor(150)
+  assert.equal(booms(), 1)
+
+  ch.send('cook', { k: 4 })
+  assert.equal(p.cookAt, 0, 'no grenade left to cook')
+  ch.disconnect(); other.disconnect()
+})
+
+test('a grenade held past its fuse goes off in the hand and kills the thrower', () => {
+  const ch = connect('Yankee', { team: 'axis' })
+  const p = deploy(ch, { cls: 'assault', primary: 'mp40', secondary: 'p38' })
+  p.protectUntil = 0
+  const kills = p.kills
+  ch.send('cook', { k: 0 })
+  grenadesFor(GRENADE.fuse * 1000 - 100)
+  assert.equal(p.alive, true)
+  grenadesFor(150)
+  assert.equal(ch.last('nade').d, null, 'the holder is told it fell from their hand')
+  assert.equal(p.alive, false)
+  assert.equal(p.grenades, 0)
+  assert.deepEqual(ch.last('kill'), { k: p.id, v: p.id, w: GRENADE.id, hs: false })
+  assert.equal(p.kills, kills, 'no score for blowing yourself up')
+  ch.disconnect()
+})
+
+test('a soldier killed while cooking drops the live grenade with the fuse it had left', () => {
+  const ch = connect('Zulu', { team: 'allies' })
+  const p = deploy(ch, { cls: 'assault', primary: 'thompson', secondary: 'm1911' })
+  ch.send('cook', { k: 5 })
+  grenadesFor(1000)
+  game.kill(p, null, 'mp40', false)
+  const dropped = ch.last('nade')
+  assert.equal(dropped.k, 5)
+  assert.equal(dropped.d, null)
+  assert.equal(dropped.f, GRENADE.fuse * 1000 - 1000)
+  const g = game.grenades.find((q) => q.owner === p.id && q.k === 5)
+  assert.ok(g && Math.hypot(...g.vel) === 0, 'falls rather than flies')
+  grenadesFor(GRENADE.fuse * 1000 - 1000 + 50)
+  assert.ok(ch.sent.some(([ev, d]) => ev === 'boom' && d.id === p.id && d.k === 5))
+  advance(MATCH.respawnDelay * 1000 + 100)
+  assert.equal(p.cookAt, 0, 'a new life starts with nothing cooking')
+  ch.disconnect()
+})
+
 test('a thrown grenade arcs, lands and settles before the fuse runs out', () => {
   const sp = game.map.spawns.allies[0]
   const eye = [sp[0], sp[1] + PLAYER.eye, sp[2]]

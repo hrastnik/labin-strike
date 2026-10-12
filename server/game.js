@@ -78,6 +78,7 @@ export class Game {
     channel.on('join', (data) => this.join(channel, data))
     channel.on('st', (data) => { const p = channel.player; if (p) this.handleState(p, data) })
     channel.on('fire', (data) => { const p = channel.player; if (p) this.handleFire(p, data) })
+    channel.on('cook', (data) => { const p = channel.player; if (p) this.handleCook(p, data) })
     channel.on('nade', (data) => { const p = channel.player; if (p) this.handleNade(p, data) })
     channel.on('knife', (data) => { const p = channel.player; if (p) this.handleKnife(p, data) })
     channel.on('loadout', (data) => { const p = channel.player; if (p) this.handleLoadout(p, data) })
@@ -167,6 +168,8 @@ export class Game {
       ammo: {}, // weapon id -> rounds left this life (magazine + reserve)
       grenades: 0,
       nadeSeq: 0, // bots number their own throws; humans send theirs
+      cookAt: 0, // server ms the cord of the grenade in hand was pulled, 0 when not holding a live one
+      cookK: 0,
       deployed: isBot, // humans deploy from the loadout screen
       spawnedAt: 0,
       lastLoadoutReq: 0,
@@ -266,6 +269,7 @@ export class Game {
       p.ammo[l[slot]] = a.mag + a.reserve
     }
     p.grenades = GRENADE.count
+    p.cookAt = 0
   }
 
   // ------------------------------------------------------------------ loadouts and teams
@@ -312,6 +316,7 @@ export class Game {
     p.lastTeamSwitch = now
     // leaving the field is not a death: no score change, back to the loadout screen
     p.alive = false
+    p.cookAt = 0
     p.team = team
     p.loadout = sanitizeLoadout(team, p.pendingLoadout || p.loadout)
     p.pendingLoadout = null
@@ -399,6 +404,13 @@ export class Game {
     this.applyDamage(target, p, damageFor(id, dist, zone), id, zone)
   }
 
+  // { k: the client's throw number }: the fuse is timed here, so a client cannot claim a longer or shorter cook
+  handleCook (p, msg) {
+    if (!p.alive || !(p.grenades > 0) || p.cookAt) return
+    p.cookAt = this.now()
+    p.cookK = nadeKey(msg?.k)
+  }
+
   // { o: eye position, d: view direction, k: the client's throw number (pairs its own visual with the blast) }
   handleNade (p, msg) {
     if (!p.alive || !(p.grenades > 0) || !msg) return
@@ -408,8 +420,7 @@ export class Game {
     if (Math.hypot(o[0] - p.pos[0], o[1] - eyeY, o[2] - p.pos[2]) > 3) return
     const len = Math.hypot(d[0], d[1], d[2])
     if (len < 0.5 || len > 1.5) return
-    const k = Number.isInteger(msg.k) && msg.k >= 0 ? msg.k % 1e6 : 0
-    this.throwGrenade(p, o, d.map((v) => v / len), k)
+    this.throwGrenade(p, o, d.map((v) => v / len), nadeKey(msg.k))
   }
 
   // { o: eye position, d: view direction, hit: id of the enemy the client saw within reach, if any }
@@ -437,16 +448,29 @@ export class Game {
     this.applyDamage(target, p, KNIFE.damage, KNIFE.id, 'body')
   }
 
+  // d: null lets a cooked grenade fall from the hand; the thrower has no local copy of that one, so all are told
   throwGrenade (p, o, d, k = p.nadeSeq++) {
     const now = this.now()
+    const explodeAt = p.cookAt ? Math.max(now, p.cookAt + GRENADE.fuse * 1000) : now + GRENADE.fuse * 1000
+    p.cookAt = 0
     p.grenades--
     p.firedAt = now
-    o = o.map(r3); d = d.map(r3) // the exact values the clients simulate from
-    this.grenades.push({ ...createGrenade(o, d), owner: p.id, team: p.team, k, acc: 0, explodeAt: now + GRENADE.fuse * 1000 })
-    this.emitOthers(p, 'nade', { id: p.id, k, o, d }, true)
+    o = o.map(r3); d = d?.map(r3) ?? null // the exact values the clients simulate from
+    this.grenades.push({ ...createGrenade(o, d), owner: p.id, team: p.team, k, acc: 0, explodeAt })
+    const msg = { id: p.id, k, o, d, f: Math.round(explodeAt - now) }
+    if (d) this.emitOthers(p, 'nade', msg, true)
+    else this.emitAll('nade', msg, true)
+  }
+
+  dropCooked (p) {
+    const hand = [p.pos[0], p.pos[1] + (p.crouch ? PLAYER.crouchEye : PLAYER.eye) - 0.4, p.pos[2]]
+    this.throwGrenade(p, hand, null, p.cookK)
   }
 
   updateGrenades (dt, now) {
+    for (const p of this.players.values()) {
+      if (p.alive && p.cookAt && now - p.cookAt >= GRENADE.fuse * 1000) this.dropCooked(p)
+    }
     for (const g of this.grenades) {
       g.acc += dt
       while (g.acc >= NADE_DT) { g.acc -= NADE_DT; stepGrenade(this.RAPIER, this.world, g) }
@@ -524,6 +548,7 @@ export class Game {
     }
     this.emitAll('kill', { k: attacker?.id, v: victim.id, w: weapon, hs: headshot }, true)
     this.dropAmmo(victim)
+    if (victim.cookAt) this.dropCooked(victim)
     if (this.match.scores[attacker?.team] >= MATCH.scoreLimit) this.endMatch(attacker.team)
     else this.broadcastRoster()
   }
@@ -664,6 +689,10 @@ export class Game {
 
 function validVec (v) {
   return Array.isArray(v) && v.length === 3 && v.every(Number.isFinite)
+}
+
+function nadeKey (k) {
+  return Number.isInteger(k) && k >= 0 ? k % 1e6 : 0
 }
 
 // bots roll a fresh class and weapons from their own faction every life

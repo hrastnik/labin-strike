@@ -14,8 +14,9 @@ export function launchVelocity (dir) {
   return [(dir[0] / h) * c, Math.sin(pitch) * GRENADE.speed, (dir[2] / h) * c]
 }
 
+// dir: null lets it fall from the hand instead of throwing it
 export function createGrenade (origin, dir) {
-  return { pos: origin.slice(), vel: launchVelocity(dir), rest: false }
+  return { pos: origin.slice(), vel: dir ? launchVelocity(dir) : [0, 0, 0], rest: false }
 }
 
 // advances g = { pos, vel, rest } by one NADE_DT; returns the impact speed when it hits something this step

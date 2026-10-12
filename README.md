@@ -18,7 +18,7 @@ A browser-based, low-poly multiplayer team deathmatch shooter set on **Rudarska 
 - 22 WWII weapons across six classes (Rifleman, Assault, Support, Marksman, Officer, Engineer), each with its own damage falloff, fire rate, recoil, spread, reload style, handling and movement weight
 - Strict faction rules: Axis soldiers only ever carry Axis weapons and Allied soldiers Allied ones, enforced by the server
 - Aim down sights, sprint, crouch, jump, and spawn protection
-- Every soldier, on either side, carries one Stielhandgranate 24 stick grenade per life. It bounces off the map, has a 3.5 s fuse, and bots throw theirs at enemies who duck behind cover
+- Every soldier, on either side, carries one Stielhandgranate 24 stick grenade per life. It bounces off the map and has a 3.5 s fuse that starts when the cord is pulled: hold G to cook it, but hold it too long and it goes off in your hand, and if you are killed with it cooking it drops at your feet. Bots throw theirs at enemies who duck behind cover
 - A knife on <kbd>V</kbd> (M3 trench knife or S84/98 bayonet): one stab kills at arm's length. Bots use it up close, and they move in for it while reloading
 - Every death, friendly or enemy, leaves an ammo can under the body for 30 s. Walk over it to refill your own weapons' reserve, up to what you spawned with
 - Health regenerates COD2-style after 5 s without taking damage
@@ -49,7 +49,7 @@ Handy URL params: `?name=Mateo` pre-fills the callsign, `?team=axis` picks a sid
 | --- | --- | --- | --- |
 | <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> | Move | Mouse | Aim |
 | <kbd>LMB</kbd> | Fire | <kbd>RMB</kbd> | Aim down sights |
-| <kbd>Shift</kbd> | Sprint (forward) | <kbd>G</kbd> | Throw grenade |
+| <kbd>Shift</kbd> | Sprint (forward) | <kbd>G</kbd> | Throw grenade (hold to cook) |
 | <kbd>Space</kbd> | Jump | <kbd>C</kbd> / <kbd>Ctrl</kbd> | Crouch |
 | <kbd>R</kbd> | Reload | <kbd>1</kbd> / <kbd>2</kbd> / <kbd>Q</kbd> | Rifle / pistol / last weapon |
 | <kbd>Tab</kbd> | Scoreboard | <kbd>Esc</kbd> | Pause |
@@ -66,7 +66,7 @@ tools/    Blender build scripts for the map and cars, texture/sky generators
 
 - **Networking.** [geckos.io](https://github.com/geckos-io/geckos.io) sends data over WebRTC data channels, so it behaves like UDP inside the browser. The server ticks at 30 Hz and sends snapshots at 20 Hz. Clients upload input at 30 Hz and interpolate remote players with a 110 ms buffer. HTTP and the WebRTC UDP mux share port **7344**, so one TCP+UDP firewall rule is enough.
 - **Physics.** [Rapier](https://rapier.rs/) runs the same kinematic character motor on both sides: the client for the local player, the server for bots. Movement collides identically everywhere.
-- **Grenades.** `shared/grenade.js` steps the flight (gravity, bounces off solid geometry) at a fixed 60 Hz. The server runs it to place the blast and deal damage: full damage within 2 m, nothing past 7.5 m, only to body parts it can see, never to teammates, but to the thrower. Clients replay the same throw so their visual follows the server's path until the `boom` message arrives.
+- **Grenades.** `shared/grenade.js` steps the flight (gravity, bounces off solid geometry) at a fixed 60 Hz. The server runs it to place the blast and deal damage: full damage within 2 m, nothing past 7.5 m, only to body parts it can see, never to teammates, but to the thrower. Clients replay the same throw so their visual follows the server's path until the `boom` message arrives. The fuse is timed on the server from the client's `cook` message (sent on pressing G) to its `nade` message, so a client cannot shorten or stretch it.
 - **Knife and ammo cans.** The client picks who its stab reaches, and the server re-checks reach, angle and line of sight with some slack for latency (`knifeReach` in `shared/hitbox.js`). The server also places the ammo cans, gives each one to the first soldier over it who is short of ammunition, and removes them when they expire. Clients only draw them.
 - **Cats.** Where Counter-Strike has chickens, Rudarska ulica has the main developer's cats. `server/cats.js` walks them around the nav grid, lets them stop to look around or lie down, and sends them running from soldiers who come close (crouch to sneak up), from bullets passing near them and from grenades. Nobody can hurt them. They ride along in the snapshots, and `client/src/cats.js` animates the Blender model with code: legs, head and tail each have their own pivot.
 - **Hits.** Players have a head sphere plus body and leg capsules, defined in `shared/hitbox.js`. The client claims a hit, and the server checks the shooter's position, the target's position and line of sight before applying damage.

@@ -14,16 +14,17 @@ export class Grenades {
     this.template.traverse((o) => { if (o.isMesh) o.castShadow = true })
   }
 
-  spawn (key, origin, dir) {
+  // dir: null when it fell from the hand; fuse: ms left until it goes off
+  spawn (key, origin, dir, fuse = GRENADE.fuse * 1000) {
     this.remove(key)
     const mesh = this.template.clone()
     mesh.rotation.order = 'YXZ'
-    mesh.rotation.y = Math.atan2(-dir[0], -dir[2])
+    mesh.rotation.y = dir ? Math.atan2(-dir[0], -dir[2]) : Math.random() * Math.PI * 2
     mesh.position.set(...origin)
-    mesh.visible = false
+    mesh.visible = !dir
     this.scene.add(mesh)
     const g = createGrenade(origin, dir)
-    this.live.set(key, { ...g, origin, prev: origin.slice(), acc: 0, mesh, expireAt: performance.now() + (GRENADE.fuse + 2) * 1000 })
+    this.live.set(key, { ...g, origin, prev: origin.slice(), acc: 0, mesh, expireAt: performance.now() + fuse + 2000 })
   }
 
   // returns the last simulated position, or null if the grenade was not known here

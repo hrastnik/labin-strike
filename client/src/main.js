@@ -3,7 +3,7 @@ import './style.css'
 import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { PLAYER, INPUT_RATE, INTERP_DELAY, MATCH, TEAMS } from '@shared/constants.js'
-import { WEAPONS, CLASSES, KNIFE, sanitizeLoadout } from '@shared/weapons.js'
+import { WEAPONS, CLASSES, GRENADE, KNIFE, sanitizeLoadout } from '@shared/weapons.js'
 import { parseGlbJson, extractMapData } from '@shared/mapdata.js'
 import { buildMapWorld, rayMap, lineOfSight } from '@shared/physics.js'
 import { rayVsPlayer, knifeReach } from '@shared/hitbox.js'
@@ -52,6 +52,8 @@ const G = {
   hits: 0,
   shots: 0,
   nadeSeq: 0,
+  cookK: 0, // throw number of the grenade in hand
+  cookAt: 0, // when its cord was pulled (performance.now)
   shake: 0, // camera shake from nearby blasts, 0..1
   tps: 0, // server position corrections received
   trace: null // test helper: per-frame [t, camX, camY, camZ]
@@ -416,9 +418,10 @@ net.on('shot', (d) => {
   }
 })
 
+// our own throws are never echoed back, but a cooked grenade we dropped or held too long is
 net.on('nade', (d) => {
-  if (G.state !== 'playing' || !grenades || d.id === G.myId) return
-  grenades.spawn(`${d.id}:${d.k}`, d.o, d.d)
+  if (G.state !== 'playing' || !grenades) return
+  grenades.spawn(`${d.id}:${d.k}`, d.o, d.d, d.f)
 })
 
 net.on('boom', (d) => {
@@ -568,8 +571,8 @@ function throwGrenade () {
   const d0 = [tmpV.x, tmpV.y, tmpV.z].map(r3)
   const len = Math.hypot(...d0)
   const d = d0.map((v) => r3(v / len))
-  const k = G.nadeSeq++
-  grenades.spawn(`${G.myId}:${k}`, o, d)
+  const k = G.cookK
+  grenades.spawn(`${G.myId}:${k}`, o, d, GRENADE.fuse * 1000 - (performance.now() - G.cookAt))
   net.emit('nade', { o, d, k }, true)
   audio.nadeThrow()
 }
@@ -730,6 +733,7 @@ function updateGame (dt, now) {
     reload: canAct && input.wasPressed('KeyR'),
     switchTo: player.alive && !loadoutMenu.isOpen ? switchTo : null,
     throwNade: canAct && input.wasPressed('KeyG'),
+    holdNade: canAct && input.down('KeyG'),
     knife: canAct && input.wasPressed('KeyV'),
     sprint: player.sprinting,
     alive: canAct
@@ -797,7 +801,12 @@ function updateGame (dt, now) {
     else if (ev === 'reload') audio.reload(ws.id, ws.reloadDur, ws.reloadSteps)
     else if (ev === 'switch') audio.weaponSwitch()
     else if (ev === 'ping') { audio.ping(); viewmodel.ping() }
-    else if (ev === 'windup') audio.nadeWindup()
+    else if (ev === 'windup') {
+      G.cookK = G.nadeSeq++
+      G.cookAt = performance.now()
+      net.emit('cook', { k: G.cookK }, true)
+      audio.nadeWindup()
+    }
     else if (ev === 'throw') throwGrenade()
     else if (ev === 'swing') audio.knifeSwing()
     else if (ev === 'stab') knifeStrike()
@@ -899,6 +908,7 @@ window.__labin = {
     weapon: weapons.id,
     ammo: weapons.clip,
     grenades: weapons.grenades,
+    cooking: weapons.cooking ? weapons.cookT : null,
     grenadesInFlight: grenades?.live.size,
     drops: [...drops.live].map(([id, d]) => ({ id, pos: d.mesh.position.toArray().map(r2) })),
     knifing: weapons.knifing,
