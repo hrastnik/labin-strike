@@ -1,6 +1,8 @@
-// DOM HUD: health, ammo, pickups, crosshair, hitmarkers, killfeed, scores/timer, scoreboard, compass minimap.
+// DOM HUD: health, ammo, pickups, crosshair, hitmarkers, killfeed, scores/timer, scoreboard, compass minimap,
+// and the Search and Destroy round line, site markers and plant / defuse bar.
 import { WEAPONS, TEAMS, PLAYER } from '@shared/constants.js'
 import { GRENADE, KNIFE } from '@shared/weapons.js'
+import { MODES, SD } from '@shared/modes.js'
 
 // compass north in map (x, z) coordinates
 const NORTH_X = -0.8502
@@ -20,6 +22,12 @@ export class Hud {
       scoreAllies: $('score-allies'),
       scoreAxis: $('score-axis'),
       timer: $('timer'),
+      roundInfo: $('round-info'),
+      markers: $('sd-markers'),
+      usePrompt: $('use-prompt'),
+      act: $('act'),
+      actLabel: $('act-label'),
+      actFill: $('act-fill'),
       centerMsg: $('center-msg'),
       notices: $('notices'),
       killfeed: $('killfeed'),
@@ -36,6 +44,7 @@ export class Hud {
       weaponHint: $('weapon-hint'),
       pickup: $('pickup'),
       death: $('death'),
+      deathTitle: $('death-title'),
       deathBy: $('death-by'),
       deathRespawn: $('death-respawn'),
       deathNext: $('death-next'),
@@ -51,6 +60,7 @@ export class Hud {
     this.last = {}
     this.centerTimer = 0
     this.mapImage = null
+    this.marks = new Map() // marker key -> element
   }
 
   show (v) { this.el.hud.classList.toggle('hidden', !v) }
@@ -157,11 +167,50 @@ export class Hud {
     this.set('sx', match.scores.axis, (v) => { this.el.scoreAxis.textContent = v })
   }
 
-  timer (secondsLeft, state) {
+  timer (secondsLeft, low) {
     const s = Math.max(0, Math.ceil(secondsLeft))
     const txt = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
     this.set('timer', txt, (v) => { this.el.timer.textContent = v })
-    this.set('timerlow', state === 'playing' && s <= 60, (v) => this.el.timer.classList.toggle('low', v))
+    this.set('timerlow', low, (v) => this.el.timer.classList.toggle('low', v))
+  }
+
+  // html: the Search and Destroy round line under the scores ('' in Team Deathmatch)
+  roundInfo (html, bomb) {
+    this.set('round', html, (v) => { this.el.roundInfo.innerHTML = v })
+    this.set('roundbomb', bomb, (v) => this.el.roundInfo.classList.toggle('bomb', v))
+  }
+
+  usePrompt (html) {
+    this.set('use', html, (v) => { this.el.usePrompt.innerHTML = v })
+  }
+
+  // frac: 0..1 through planting or defusing, or -1 when doing neither
+  act (frac, label) {
+    this.set('act', frac >= 0, (v) => this.el.act.classList.toggle('show', v))
+    if (frac < 0) return
+    this.set('actlabel', label, (v) => { this.el.actLabel.textContent = v })
+    this.el.actFill.style.width = `${Math.round(Math.min(1, frac) * 100)}%`
+  }
+
+  // list: [{ key, x, y (screen px), text, sub, cls }] for the sites and the bomb in view
+  markers (list) {
+    const seen = new Set()
+    for (const m of list) {
+      seen.add(m.key)
+      let el = this.marks.get(m.key)
+      if (!el) {
+        el = document.createElement('div')
+        this.el.markers.appendChild(el)
+        this.marks.set(m.key, el)
+      }
+      const cls = `sd-mark ${m.cls}`
+      if (el.className !== cls) el.className = cls
+      const html = `${esc(m.text)}<small>${esc(m.sub)}</small>`
+      if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html }
+      el.style.left = `${m.x.toFixed(1)}px`
+      el.style.top = `${m.y.toFixed(1)}px`
+    }
+    for (const [key, el] of this.marks) if (!seen.has(key)) { el.remove(); this.marks.delete(key) }
   }
 
   center (html, seconds = 2.5) {
@@ -182,7 +231,8 @@ export class Hud {
     const d = document.createElement('div')
     d.className = 'kf'
     const name = (p) => p ? `<span class="${p.team}${p.id === myId ? ' me' : ''}">${esc(p.name)}</span>` : '<span>World</span>'
-    const w = weapon === GRENADE.id ? GRENADE.name : weapon === KNIFE.id ? KNIFE.name[killer?.team] ?? 'Knife' : WEAPONS[weapon]?.name || weapon
+    const w = weapon === GRENADE.id ? GRENADE.name : weapon === KNIFE.id ? KNIFE.name[killer?.team] ?? 'Knife'
+      : weapon === SD.bomb.id ? SD.bomb.name : WEAPONS[weapon]?.name || weapon
     if (killer && killer.id !== victim?.id) {
       d.innerHTML = `${name(killer)}<span class="wpn">${esc(w)}</span>${headshot ? '<span class="hs">HEADSHOT</span>' : ''}${name(victim)}`
     } else {
@@ -197,13 +247,16 @@ export class Hud {
     this.set('scope', on, (v) => this.el.scope.classList.toggle('hidden', !v))
   }
 
-  death (show, killerName, secondsLeft, nextText = '') {
+  // status: replaces the respawn countdown (Search and Destroy has none)
+  death (show, killerName, secondsLeft, nextText = '', title = 'You were killed', status = null) {
     this.el.death.classList.toggle('hidden', !show)
     if (!show) return
+    this.set('deathtitle', title, (v) => { this.el.deathTitle.textContent = v })
     this.set('deathby', killerName, (v) => { this.el.deathBy.textContent = v ? `by ${v}` : '' })
     this.set('deathnext', nextText, (v) => { this.el.deathNext.textContent = v })
     const s = Math.max(0, Math.ceil(secondsLeft))
-    this.set('respawn', s, (v) => { this.el.deathRespawn.textContent = v > 0 ? `Respawning in ${v}…` : 'Respawning…' })
+    const txt = status ?? (s > 0 ? `Respawning in ${s}…` : 'Respawning…')
+    this.set('respawn', txt, (v) => { this.el.deathRespawn.textContent = v })
   }
 
   scoreboard (show, roster, match, myId, aliveSet) {
@@ -212,7 +265,9 @@ export class Hud {
     const rows = (team) => [...roster.values()].filter((p) => p.team === team).sort((a, b) => b.k - a.k || a.d - b.d)
       .map((p) => `<tr class="${p.id === myId ? 'me' : ''} ${aliveSet.has(p.id) ? '' : 'dead'}"><td class="name">${esc(p.name)}${p.bot ? '<span class="bot">BOT</span>' : ''}</td><td class="n">${p.k}</td><td class="n">${p.d}</td><td class="n">${p.bot ? '–' : p.ping}</td></tr>`).join('')
     const table = (team) => `<table class="${team}"><caption>${TEAMS[team].name} &nbsp;${match.scores[team]}</caption><thead><tr><th>Name</th><th class="n">K</th><th class="n">D</th><th class="n">Ping</th></tr></thead><tbody>${rows(team)}</tbody></table>`
-    const html = `<div class="sb-head"><div class="t">Team Deathmatch</div><div class="s">Rudarska ulica &middot; first to ${match.scoreLimit}</div></div><div class="sb-cols">${table('allies')}${table('axis')}</div>`
+    const sd = match.mode === 'sd'
+    const goal = sd ? `round ${match.round} &middot; first to ${match.scoreLimit} rounds` : `first to ${match.scoreLimit}`
+    const html = `<div class="sb-head"><div class="t">${MODES[match.mode ?? 'tdm'].name}</div><div class="s">Rudarska ulica &middot; ${goal}</div></div><div class="sb-cols">${table('allies')}${table('axis')}</div>`
     this.set('sbhtml', html, (v) => { this.el.scoreboard.innerHTML = v })
   }
 
@@ -252,8 +307,8 @@ export class Hud {
     this.mapImage = { canvas: c, scale, x0: b.min[0], z0: b.min[2] }
   }
 
-  // rotating minimap: player at centre, view direction up
-  compass (me, yaw, players) {
+  // rotating minimap: player at centre, view direction up; sites: [{ x, z, text, color }] pinned to the rim when far
+  compass (me, yaw, players, sites = []) {
     const g = this.compassCtx
     const S = this.el.compass.width
     g.clearRect(0, 0, S, S)
@@ -284,6 +339,22 @@ export class Hud {
       g.strokeStyle = 'rgba(0,0,0,.7)'
       g.lineWidth = 1.5
       g.stroke()
+    }
+    g.font = '600 16px "Stardos Stencil", Oswald, sans-serif'
+    g.textAlign = 'center'; g.textBaseline = 'middle'
+    for (const st of sites) {
+      const dx = st.x - me.x; const dz = st.z - me.z
+      const c = Math.cos(yaw); const s = Math.sin(yaw)
+      let sx = (dx * c - dz * s) * m.scale * zoom
+      let sy = (dx * s + dz * c) * m.scale * zoom
+      const r = Math.hypot(sx, sy)
+      const maxR = S / 2 - 12
+      if (r > maxR) { sx *= maxR / r; sy *= maxR / r }
+      g.lineWidth = 3
+      g.strokeStyle = 'rgba(0,0,0,.8)'
+      g.strokeText(st.text, S / 2 + sx, S / 2 + sy)
+      g.fillStyle = st.color
+      g.fillText(st.text, S / 2 + sx, S / 2 + sy)
     }
     // self arrow
     g.fillStyle = '#f2e7c4'

@@ -4,6 +4,7 @@ import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { PLAYER, INPUT_RATE, INTERP_DELAY, MATCH, TEAMS } from '@shared/constants.js'
 import { WEAPONS, CLASSES, GRENADE, KNIFE, sanitizeLoadout } from '@shared/weapons.js'
+import { MODES, SD, SD_SITES, otherTeam, sdSiteAt } from '@shared/modes.js'
 import { parseGlbJson, extractMapData } from '@shared/mapdata.js'
 import { buildMapWorld, rayMap, lineOfSight } from '@shared/physics.js'
 import { rayVsPlayer, knifeReach } from '@shared/hitbox.js'
@@ -18,6 +19,7 @@ import { Avatars } from './avatars.js'
 import { Effects } from './effects.js'
 import { Grenades } from './grenades.js'
 import { Drops } from './drops.js'
+import { Bomb } from './bomb.js'
 import { Audio } from './audio.js'
 import { Hud } from './hud.js'
 import { Net } from './net.js'
@@ -55,6 +57,8 @@ const G = {
   cookK: 0, // throw number of the grenade in hand
   cookAt: 0, // when its cord was pulled (performance.now)
   shake: 0, // camera shake from nearby blasts, 0..1
+  act: null, // Search and Destroy: { k: 'plant' | 'defuse', at, ms } while the server runs our plant or defuse
+  useHeld: false, // last use-key state sent to the server
   tps: 0, // server position corrections received
   trace: null // test helper: per-frame [t, camX, camY, camZ]
 }
@@ -77,6 +81,7 @@ const avatars = new Avatars(scene)
 const effects = new Effects(scene)
 const drops = new Drops(scene)
 const audio = new Audio()
+const bomb = new Bomb(scene, audio)
 const hud = new Hud()
 const net = new Net()
 
@@ -156,6 +161,7 @@ $('pause').addEventListener('click', () => { if (G.state === 'playing') input.lo
 $('btn-loadout').addEventListener('click', (e) => { e.stopPropagation(); openLoadout() })
 $('btn-leave').addEventListener('click', (e) => { e.stopPropagation(); leave('Left the match') })
 $('btn-bots').addEventListener('click', (e) => { e.stopPropagation(); net.emit('bots', { on: !G.match.bots }, true) })
+$('btn-mode').addEventListener('click', (e) => { e.stopPropagation(); net.emit('mode', { mode: G.match.mode === 'sd' ? 'tdm' : 'sd' }, true) })
 canvas.addEventListener('click', () => { if (G.state === 'playing' && !input.locked) input.lock() })
 
 function setStatus (text, error = false) {
@@ -256,6 +262,9 @@ function leave (msg) {
   cats?.clear()
   grenades?.clear()
   drops.clear()
+  bomb.remove()
+  G.act = null
+  G.useHeld = false
   G.roster.clear()
   showMenu(true)
   hud.pause(false)
@@ -310,6 +319,8 @@ net.on('spawn', (d) => onSpawn(d))
 function onSpawn (d) {
   if (!player || d.life <= player.life) return
   player.spawn(d.pos, d.yaw, d.life)
+  player.deathPos = null
+  G.act = null
   applyLoadout(d.loadout)
   G.deployed = true
   G.killerName = ''
@@ -384,16 +395,54 @@ function setRoster (players, match) {
   for (const p of players) G.roster.set(p.id, p)
   const me = G.roster.get(G.myId)
   if (me) G.myPing = me.ping
-  const prev = G.match.state
+  const prev = G.match
   G.match = match
   $('btn-bots').textContent = `Bots: ${match.bots ? 'on' : 'off'}`
-  G.matchEndsLocal = performance.now() + match.timeLeft * 1000
-  if (prev === 'playing' && match.state === 'ended') {
+  $('btn-mode').textContent = `Mode: ${MODES[match.mode].short}`
+  G.matchEndsLocal = performance.now() + (match.msLeft ?? match.timeLeft * 1000)
+  if (match.bomb) bomb.place(match.bomb.p, match.roundState === 'live' ? match.msLeft : null)
+  else bomb.remove()
+  if (prev.state === 'playing' && match.state === 'ended') {
     const txt = match.winner === 'draw' ? 'DRAW' : match.winner === G.team ? 'VICTORY' : 'DEFEAT'
     const sub = match.winner === 'draw' ? 'The match ended in a draw' : `${TEAMS[match.winner]?.name} win ${match.scores.allies} – ${match.scores.axis}`
-    hud.center(`${txt}<small>${sub} · next round in ${match.timeLeft}s</small>`, MATCH.intermission)
+    hud.center(`${txt}<small>${sub} · next ${match.mode === 'sd' ? 'match' : 'round'} in ${match.timeLeft}s</small>`, MATCH.intermission)
+  } else if (match.mode === 'sd' && match.state === 'playing') {
+    if (match.roundState === 'live' && (match.round !== prev.round || prev.mode !== 'sd')) {
+      const task = match.attackers === G.team ? 'Attack: plant the bomb at site A or B' : 'Defend sites A and B'
+      hud.center(`ROUND ${match.round}<small>${task}</small>`, 3.5)
+    } else if (match.roundState === 'over' && prev.roundState === 'live') {
+      const loser = otherTeam(match.roundWinner)
+      const why = { eliminated: `The ${TEAMS[loser].name} were wiped out`, time: 'Time ran out', bomb: 'The bomb went off', defused: 'The bomb was defused' }[match.reason]
+      hud.center(`${match.roundWinner === G.team ? 'ROUND WON' : 'ROUND LOST'}<small>${why} · ${match.scores.allies} – ${match.scores.axis}</small>`, SD.roundOver)
+    }
   }
 }
+
+net.on('act', (d) => { G.act = d.k ? { k: d.k, at: performance.now(), ms: d.ms } : null })
+
+net.on('bomb', (d) => {
+  if (G.state !== 'playing') return
+  if (d.e === 'plant') {
+    bomb.place(d.p, d.ms)
+    audio.click(900, 0.4, 0.08)
+  } else if (d.e === 'defuse') {
+    bomb.remove()
+    audio.click(2400, 0.35, 0.05)
+    audio.click(1600, 0.35, 0.06, 0.1)
+  } else if (d.e === 'boom') {
+    bomb.remove()
+    const pos = new THREE.Vector3(...d.p)
+    const below = rayMap(RAPIER, world, [pos.x, pos.y + 0.2, pos.z], [0, -1, 0], 0.8)
+    const scorch = below && below.normal[1] > 0.5 ? { point: new THREE.Vector3(pos.x, pos.y + 0.2 - below.dist, pos.z), normal: below.normal } : null
+    for (let i = 0; i < 3; i++) {
+      const at = pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 3, 0.2 + i * 0.6, (Math.random() - 0.5) * 3))
+      effects.explosion(at, i === 0 ? scorch : null)
+    }
+    const dist = pos.distanceTo(player.eyePos(tmpV))
+    audio.explosion(pos, dist)
+    if (player.alive) G.shake = Math.max(G.shake, Math.max(0, 1 - dist / 50) ** 2)
+  }
+})
 
 net.on('shot', (d) => {
   if (G.state !== 'playing' || d.id === G.myId) return
@@ -487,6 +536,7 @@ net.on('kill', (d) => {
     G.respawnAt = performance.now() + MATCH.respawnDelay * 1000
     G.killerName = killer && killer.id !== G.myId ? killer.name : ''
     input.mouse.left = false
+    G.act = null
   } else if (d.k === G.myId && victim) {
     hud.center(`<small>You killed ${escapeHtml(victim.name)}${d.hs ? ' · headshot' : ''}</small>`, 1.6)
   }
@@ -686,6 +736,7 @@ function frame () {
 
   effects.update(dt)
   drops.update()
+  bomb.update()
   if (G.state === 'playing') cats?.update(dt, avatars.renderTime(INTERP_DELAY), camera.position)
   grenades?.update(dt, (pos, impact) => audio.nadeBounce(pos, Math.min(1, impact / 10)))
   cars?.update(camera.position, dt)
@@ -728,23 +779,29 @@ function updateGame (dt, now) {
   if (input.wasPressed('KeyQ')) switchTo = weapons.prevIndex
   if (input.mouse.wheel) switchTo = (weapons.index + 1) % weapons.slots.length
   const canAct = player.alive && locked && G.match.state === 'playing' && !loadoutMenu.isOpen
+  // Search and Destroy: hold F to plant or defuse; the server decides whether it counts, and we hold still meanwhile
+  const sdLive = G.match.mode === 'sd' && G.match.roundState === 'live'
+  const wantUse = canAct && sdLive && input.down('KeyF')
+  if (wantUse !== G.useHeld) { G.useHeld = wantUse; net.emit('use', { on: wantUse }, true) }
+  const acting = !!G.act
+  const armed = canAct && !acting
   const shots = weapons.update(dt, {
-    trigger: canAct && input.mouse.left,
-    triggerPressed: canAct && input.mouse.leftPressed,
-    ads: canAct && input.mouse.right,
-    reload: canAct && input.wasPressed('KeyR'),
-    switchTo: player.alive && !loadoutMenu.isOpen ? switchTo : null,
-    throwNade: canAct && input.wasPressed('KeyG'),
-    holdNade: canAct && input.down('KeyG'),
-    knife: canAct && input.wasPressed('KeyV'),
+    trigger: armed && input.mouse.left,
+    triggerPressed: armed && input.mouse.leftPressed,
+    ads: armed && input.mouse.right,
+    reload: armed && input.wasPressed('KeyR'),
+    switchTo: player.alive && !loadoutMenu.isOpen && !acting ? switchTo : null,
+    throwNade: armed && input.wasPressed('KeyG'),
+    holdNade: armed && input.down('KeyG'),
+    knife: armed && input.wasPressed('KeyV'),
     sprint: player.sprinting,
     alive: canAct
   }, { speed: player.speed, grounded: player.grounded, crouched: player.crouched })
 
-  // movement (frozen while the loadout screen is up)
-  const steer = !loadoutMenu.isOpen
+  // movement (frozen while the loadout screen is up, or while planting / defusing)
+  const steer = !loadoutMenu.isOpen && !acting
   const forward = steer && (input.down('KeyW') || input.down('ArrowUp'))
-  const crouch = steer && (input.down('KeyC') || input.down('ControlLeft'))
+  const crouch = !loadoutMenu.isOpen && (input.down('KeyC') || input.down('ControlLeft'))
   // aiming or pulling the trigger drops out of the sprint
   const sprint = forward && !crouch && (input.down('ShiftLeft') || input.down('ShiftRight')) &&
     !(canAct && (input.mouse.left || input.mouse.right)) && !weapons.busy
@@ -779,6 +836,10 @@ function updateGame (dt, now) {
     camera.position.y -= (PLAYER.eye - 0.35) * k * k
     deathRoll += (0.45 - deathRoll) * Math.min(1, dt * 5)
     camera.rotation.set(player.pitch * (1 - k) - 0.15 * k, player.yaw, deathRoll)
+    // no respawn in Search and Destroy: after a moment, watch the round from above instead
+    if (G.match.mode === 'sd' && now - player.deathAt > 3000) updateMenuCamera(dt)
+  } else {
+    updateMenuCamera(dt)
   }
   G.shake *= Math.exp(-dt * 4)
   const targetFov = BASE_FOV + (ws.def.adsFov - BASE_FOV) * ws.adsT
@@ -861,9 +922,18 @@ function updateGame (dt, now) {
   const spread = ws.spread({ speed: player.speed, grounded: player.grounded, crouched: player.crouched })
   hud.crosshair(spread, fovCurrent, player.alive && ws.adsT < 0.5 && !ws.reloading && ws.sprintT < 0.5 && !ws.busy, player.alive ? crosshairTarget() : null)
   hud.scores(G.match, G.team)
-  hud.timer((G.matchEndsLocal - now) / 1000, G.match.state)
+  const secs = (G.matchEndsLocal - now) / 1000
+  const sd = G.match.mode === 'sd'
+  hud.timer(secs, G.match.state === 'playing' && (sd ? sdLive && (!!G.match.bomb || secs <= 15) : secs <= 60))
   const next = G.pending ? `Next spawn: ${loadoutLabel(G.pending)}` : 'Press B to change loadout'
-  hud.death(!player.alive && player.deathPos && G.match.state === 'playing', G.killerName, (G.respawnAt - now) / 1000, next)
+  if (sd) {
+    // between rounds the result banner takes the centre of the screen
+    const title = player.deathPos ? 'You were killed' : 'Round in progress'
+    hud.death(!player.alive && G.match.state === 'playing' && G.match.roundState === 'live', player.deathPos ? G.killerName : '', 0, next, title, 'You join in at the start of the next round')
+  } else {
+    hud.death(!player.alive && player.deathPos && G.match.state === 'playing', G.killerName, (G.respawnAt - now) / 1000, next)
+  }
+  const sites = updateObjectives(now, sdLive, acting)
   hud.scoreboard(input.down('Tab') || G.match.state === 'ended', G.roster, G.match, G.myId, G.aliveIds)
   hud.netstat(G.myPing, G.fps)
   const others = []
@@ -874,7 +944,56 @@ function updateGame (dt, now) {
     if (!friendly && !(a.flags & 16)) continue
     others.push({ x: a.pos.x, z: a.pos.z, friendly })
   }
-  hud.compass(player.pos, player.alive ? player.yaw : camera.rotation.y, others)
+  hud.compass(player.pos, player.alive ? player.yaw : camera.rotation.y, others, sites)
+}
+
+const markV = new THREE.Vector3()
+
+// Search and Destroy HUD: round line, use prompt, plant / defuse bar and the site markers; returns the minimap marks
+function updateObjectives (now, live, acting) {
+  const m = G.match
+  if (m.mode !== 'sd' || !m.attackers || m.state !== 'playing') {
+    hud.roundInfo('', false)
+    hud.usePrompt('')
+    hud.act(-1)
+    hud.markers([])
+    return []
+  }
+  const defenders = otherTeam(m.attackers)
+  const attacking = G.team === m.attackers
+  const b = m.bomb
+  const role = b ? `Bomb planted at ${b.s}` : attacking ? 'You are attacking' : 'You are defending'
+  hud.roundInfo(`Round ${m.round} of ${SD.halftime * 2} &middot; ${TEAMS[m.attackers].name} attack &middot; <b>${role}</b>`, !!b)
+
+  let prompt = ''
+  if (live && player.alive && !acting) {
+    const at = [player.pos.x, player.pos.y, player.pos.z]
+    if (attacking && !b) {
+      const site = sdSiteAt(defenders, at)
+      if (site) prompt = `Hold <kbd>F</kbd> to plant the bomb at ${site.id}`
+    } else if (!attacking && b && Math.hypot(at[0] - b.p[0], at[2] - b.p[2]) <= SD.defuseReach && Math.abs(at[1] - b.p[1]) < 1.5) {
+      prompt = 'Hold <kbd>F</kbd> to defuse the bomb'
+    }
+  }
+  hud.usePrompt(prompt)
+  hud.act(G.act ? (now - G.act.at) / G.act.ms : -1, G.act?.k === 'plant' ? 'Planting the bomb' : 'Defusing the bomb')
+
+  const targets = b
+    ? [{ key: 'bomb', pos: b.p, text: b.s, sub: attacking ? 'Guard' : 'Defuse', cls: 'bomb', color: '#ff5b4a' }]
+    : SD_SITES[defenders].map((s) => ({ key: s.id, pos: s.pos, text: s.id, sub: attacking ? 'Attack' : 'Defend', cls: attacking ? 'attack' : 'defend', color: attacking ? '#ffb35a' : '#8fd8ff' }))
+  const marks = []
+  const w = window.innerWidth; const h = window.innerHeight
+  for (const t of live ? targets : []) {
+    markV.set(t.pos[0], t.pos[1] + 1.4, t.pos[2])
+    const dist = Math.round(markV.distanceTo(camera.position))
+    markV.project(camera)
+    if (markV.z > 1) continue // behind the camera
+    const x = (markV.x + 1) / 2 * w; const y = (1 - markV.y) / 2 * h
+    if (x < 0 || x > w || y < 0 || y > h) continue
+    marks.push({ key: t.key, x, y, text: t.text, sub: `${t.sub} · ${dist} m`, cls: t.cls })
+  }
+  hud.markers(marks)
+  return targets.map((t) => ({ x: t.pos[0], z: t.pos[2], text: t.text, color: t.color }))
 }
 
 // debug/verification hook (read-only snapshot of game state)
