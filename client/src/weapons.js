@@ -32,6 +32,7 @@ export class WeaponSystem {
     this.sprintT = 0
     this.grenades = GRENADE.count
     this.throwT = 0
+    this.cookT = -1 // seconds since the cord was pulled, -1 once the grenade has left the hand
     this.knifeT = 0
     this.triggerHeld = false
     this.lastShotAt = -1e9
@@ -45,6 +46,7 @@ export class WeaponSystem {
   get throwing () { return this.throwT > 0 }
   // 0..1 through windup, release and recovery; -1 when not throwing
   get throwFrac () { return this.throwing ? 1 - this.throwT / THROW_TIME : -1 }
+  get cooking () { return this.cookT >= 0 }
   get knifing () { return this.knifeT > 0 }
   get knifeFrac () { return this.knifing ? 1 - this.knifeT / KNIFE_TIME : -1 }
   // hands full with the grenade or the knife
@@ -96,19 +98,32 @@ export class WeaponSystem {
     for (const id in gain) if (this.ammo[id]) this.ammo[id].reserve += gain[id]
   }
 
+  // the cord is pulled on pressing G, so once wound up the throw always goes: holding G only delays the release
   updateThrow (dt, ctl) {
     if (!this.throwing) {
       if (!ctl.throwNade || !ctl.alive || this.grenades <= 0 || this.knifing) return
       this.throwT = THROW_TIME
+      this.cookT = 0
       this.reloadT = 0
       this.events.push('windup')
       return
     }
-    if (!ctl.alive) { this.throwT = 0; return } // cancelled before release: the grenade is kept
+    if (this.cooking) {
+      this.cookT += dt
+      if (this.cookT >= GRENADE.fuse) {
+        this.cookT = -1
+        this.throwT = 0
+        this.grenades--
+        this.drawT = this.def.drawTime
+        return
+      }
+    }
     const before = this.throwT
-    this.throwT = Math.max(0, this.throwT - dt)
+    const hold = this.cooking && ctl.holdNade ? GRENADE.recover + 1e-3 : 0
+    this.throwT = Math.max(Math.min(hold, before), this.throwT - dt)
     if (before > GRENADE.recover && this.throwT <= GRENADE.recover) {
       this.grenades--
+      this.cookT = -1
       this.events.push('throw')
     }
     if (!this.throwing) this.drawT = this.def.drawTime
@@ -129,7 +144,7 @@ export class WeaponSystem {
   }
 
   /**
-   * ctl: { trigger, triggerPressed, ads, reload, switchTo, throwNade, knife, sprint, alive }
+   * ctl: { trigger, triggerPressed, ads, reload, switchTo, throwNade, holdNade, knife, sprint, alive }
    * ctx: { speed, grounded, crouched }
    * returns number of shots fired this frame
    */
