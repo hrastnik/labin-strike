@@ -1,0 +1,10 @@
+node_modules/
+dist/
+server.pid
+server.log
+.DS_Store
+.deploy.env
+.env*
+*.blend1
+__pycache__/
+*.pyc

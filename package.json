@@ -1,0 +1,29 @@
+{
+  "name": "labin-strike",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Browser-based low-poly multiplayer TDM shooter set on Rudarska ulica, Labin",
+  "type": "module",
+  "scripts": {
+    "dev": "node server/index.js",
+    "build": "vite build",
+    "start": "NODE_ENV=production node server/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.21.0",
+    "@geckos.io/server": "^3.1.0",
+    "sirv": "^3.0.2"
+  },
+  "devDependencies": {
+    "@fontsource/oswald": "^5.3.0",
+    "@fontsource/special-elite": "^5.3.0",
+    "@fontsource/stardos-stencil": "^5.3.0",
+    "@geckos.io/client": "^3.1.0",
+    "three": "^0.186.1",
+    "vite": "^8.3.4"
+  }
+}

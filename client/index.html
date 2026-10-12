@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Labin Strike</title>
+  <meta name="description" content="Low-poly multiplayer team deathmatch on Rudarska ulica, Labin." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23514a35'/%3E%3Cpath d='M16 5v22M5 16h22' stroke='%23e8dcb5' stroke-width='3'/%3E%3C/svg%3E" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud" class="hidden">
+    <div id="vignette"></div>
+    <div id="damage-dirs"></div>
+    <div id="crosshair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i></div>
+    <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
+    <div id="target-name"></div>
+
+    <div id="topbar">
+      <div class="team allies"><span class="flag"></span><span class="label">Allies</span><span class="score" id="score-allies">0</span></div>
+      <div id="timer">10:00</div>
+      <div class="team axis"><span class="score" id="score-axis">0</span><span class="label">Axis</span><span class="flag"></span></div>
+    </div>
+
+    <div id="center-msg"></div>
+    <div id="notices"></div>
+
+    <div id="bottom-left">
+      <div id="killfeed"></div>
+      <div class="compass-wrap">
+        <canvas id="compass" width="200" height="200"></canvas>
+      </div>
+      <div id="health"><div class="label">HEALTH</div><div class="bar"><div class="fill" id="health-fill"></div></div><div class="num" id="health-num">100</div></div>
+    </div>
+
+    <div id="bottom-right">
+      <div id="weapon-name">StG 44</div>
+      <div id="ammo"><span id="ammo-mag">30</span><span class="sep">/</span><span id="ammo-reserve">150</span></div>
+      <div id="ammo-bullets"></div>
+      <div id="weapon-hint"></div>
+    </div>
+
+    <div id="death" class="hidden">
+      <div class="title">You were killed</div>
+      <div class="by" id="death-by"></div>
+      <div class="respawn" id="death-respawn"></div>
+    </div>
+
+    <div id="scoreboard" class="hidden"></div>
+    <div id="netstat"></div>
+    <div id="pause" class="hidden"><div class="box"><div class="title">Paused</div><div>Click to return to the fight</div><button id="btn-leave" class="ghost">Leave match</button></div></div>
+  </div>
+
+  <div id="menu">
+    <div class="menu-shade"></div>
+    <div class="menu-panel">
+      <div class="title">LABIN STRIKE</div>
+      <div class="subtitle">Rudarska ulica &middot; Team Deathmatch</div>
+      <label class="field">
+        <span>Callsign</span>
+        <input id="name-input" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Soldier" />
+      </label>
+      <label class="field">
+        <span>Mouse sensitivity <b id="sens-val">1.0</b></span>
+        <input id="sens-input" type="range" min="0.2" max="3" step="0.05" value="1" />
+      </label>
+      <label class="field inline">
+        <input id="quality-input" type="checkbox" checked />
+        <span>High quality shadows</span>
+      </label>
+      <button id="btn-deploy" disabled>Loading&hellip;</button>
+      <div id="menu-status"></div>
+      <div id="loading"><div class="bar"><div class="fill" id="loading-fill"></div></div><div id="loading-text">Loading map&hellip;</div></div>
+      <div class="controls">
+        <div><kbd>WASD</kbd> move</div><div><kbd>Mouse</kbd> aim</div>
+        <div><kbd>LMB</kbd> fire</div><div><kbd>RMB</kbd> aim down sights</div>
+        <div><kbd>Space</kbd> jump</div><div><kbd>C</kbd> crouch</div>
+        <div><kbd>R</kbd> reload</div><div><kbd>1</kbd>/<kbd>2</kbd>/<kbd>Q</kbd> weapons</div>
+        <div><kbd>Tab</kbd> scores</div><div><kbd>Esc</kbd> pause</div>
+      </div>
+    </div>
+    <div class="menu-credit">Map reconstructed from street-level references of Rudarska ulica, Labin</div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
