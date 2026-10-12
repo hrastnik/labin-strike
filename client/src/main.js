@@ -8,9 +8,11 @@ import { MODES, SD, SD_SITES, otherTeam, sdSiteAt } from '@shared/modes.js'
 import { parseGlbJson, extractMapData } from '@shared/mapdata.js'
 import { buildMapWorld, rayMap, lineOfSight } from '@shared/physics.js'
 import { rayVsPlayer, knifeReach } from '@shared/hitbox.js'
+import { TANK, tankSide, gunRay, wrapAngle } from '@shared/tanks.js'
 import { createRenderer, createScene, fitSunToBounds, fetchMap, parseMap } from './renderer.js'
 import { loadCars } from './cars.js'
 import { loadCats } from './cats.js'
+import { loadTanks } from './tanks.js'
 import { Input } from './input.js'
 import { LocalPlayer } from './player.js'
 import { WeaponSystem } from './weapons.js'
@@ -59,6 +61,8 @@ const G = {
   shake: 0, // camera shake from nearby blasts, 0..1
   act: null, // Search and Destroy: { k: 'plant' | 'defuse', at, ms } while the server runs our plant or defuse
   useHeld: false, // last use-key state sent to the server
+  driving: null, // the tank we are in (tanks.js state), confirmed by the server
+  tankReadyAt: 0, // performance.now() when its gun is loaded
   tps: 0, // server position corrections received
   trace: null // test helper: per-frame [t, camX, camY, camZ]
 }
@@ -91,6 +95,7 @@ let player = null
 let grenades = null
 let cars = null
 let cats = null
+let tanks = null
 
 function resize () {
   const w = window.innerWidth; const h = window.innerHeight
@@ -161,6 +166,7 @@ $('pause').addEventListener('click', () => { if (G.state === 'playing') input.lo
 $('btn-loadout').addEventListener('click', (e) => { e.stopPropagation(); openLoadout() })
 $('btn-leave').addEventListener('click', (e) => { e.stopPropagation(); leave('Left the match') })
 $('btn-bots').addEventListener('click', (e) => { e.stopPropagation(); net.emit('bots', { on: !G.match.bots }, true) })
+$('btn-tanks').addEventListener('click', (e) => { e.stopPropagation(); net.emit('tanks', { on: !G.match.tanks }, true) })
 $('btn-mode').addEventListener('click', (e) => { e.stopPropagation(); net.emit('mode', { mode: G.match.mode === 'sd' ? 'tdm' : 'sd' }, true) })
 canvas.addEventListener('click', () => { if (G.state === 'playing' && !input.locked) input.lock() })
 
@@ -260,6 +266,8 @@ function leave (msg) {
   if (player) player.alive = false
   avatars.clear()
   cats?.clear()
+  stopDriving()
+  tanks?.clear()
   grenades?.clear()
   drops.clear()
   bomb.remove()
@@ -300,6 +308,7 @@ net.on('welcome', (d) => {
   G.firstSpawn = true
   store.set('lastTeam', d.team)
   if (player) { player.life = 0; player.alive = false; player.deathPos = null }
+  stopDriving()
   setRoster(d.roster, d.match)
   drops.clear()
   for (const dr of d.drops || []) drops.add(dr)
@@ -320,6 +329,7 @@ function onSpawn (d) {
   if (!player || d.life <= player.life) return
   player.spawn(d.pos, d.yaw, d.life)
   player.deathPos = null
+  stopDriving()
   G.act = null
   applyLoadout(d.loadout)
   G.deployed = true
@@ -359,6 +369,7 @@ net.on('team', (d) => {
   G.firstSpawn = true
   store.set('lastTeam', d.team)
   if (player) { player.alive = false; player.deathPos = null }
+  stopDriving()
   input.mouse.left = false
   avatars.clear() // everyone's friend / foe status flipped
   viewmodel.setTeam(d.team)
@@ -372,13 +383,44 @@ net.on('team', (d) => {
 
 net.on('tp', (d) => {
   G.tps++
-  if (player && d.life === player.life) player.teleport(d.pos)
+  if (!player || d.life !== player.life) return
+  if (G.driving) {
+    G.driving.body.setPose(d.pos[0], d.pos[1], d.pos[2], d.yaw ?? G.driving.body.yaw)
+    G.driving.body.stop()
+  } else player.teleport(d.pos)
 })
+
+// the server puts us in a tank ({ id, pos, yaw, turret, gun, ready: ms until loaded }) or back on foot ({ id: 0, pos })
+net.on('drive', (d) => {
+  if (!player || d.life !== player.life || !tanks) return
+  if (!d.id) {
+    stopDriving()
+    if (player.alive) player.teleport(d.pos)
+    return
+  }
+  const s = tanks.get(d.id)
+  if (!s) return
+  s.body.setPose(d.pos[0], d.pos[1], d.pos[2], d.yaw)
+  s.body.stop()
+  s.turret = d.turret
+  s.gun = d.gun
+  tanks.mine = G.driving = s
+  G.tankReadyAt = performance.now() + d.ready
+  input.mouse.left = false
+  hud.scope(false)
+})
+
+function stopDriving () {
+  if (tanks) tanks.mine = null
+  G.driving = null
+  audio.engine(0)
+}
 
 net.on('snap', (s) => {
   if (G.state !== 'playing') return
   avatars.onSnapshot(s, G.myId, G.roster, G.team)
   cats?.onSnapshot(s.t, s.c)
+  tanks?.onSnapshot(s.t, s.k)
   G.aliveIds.clear()
   for (const e of s.p) {
     if (e[6] & 1) G.aliveIds.add(e[0])
@@ -398,6 +440,7 @@ function setRoster (players, match) {
   const prev = G.match
   G.match = match
   $('btn-bots').textContent = `Bots: ${match.bots ? 'on' : 'off'}`
+  $('btn-tanks').textContent = `Tanks: ${match.tanks ? 'on' : 'off'}`
   $('btn-mode').textContent = `Mode: ${MODES[match.mode].short}`
   G.matchEndsLocal = performance.now() + (match.msLeft ?? match.timeLeft * 1000)
   if (match.bomb) bomb.place(match.bomb.p, match.roundState === 'live' ? match.msLeft : null)
@@ -442,6 +485,50 @@ net.on('bomb', (d) => {
     audio.explosion(pos, dist)
     if (player.alive) G.shake = Math.max(G.shake, Math.max(0, 1 - dist / 50) ** 2)
   }
+})
+
+// a tank gun: the shooter's client already showed its own muzzle blast
+net.on('shell', (d) => {
+  if (G.state !== 'playing') return
+  const s = tanks?.get(d.id)
+  const o = new THREE.Vector3(...d.o)
+  const e = new THREE.Vector3(...d.e)
+  const dir = e.clone().sub(o).normalize()
+  const muzzle = o.clone().addScaledVector(dir, s ? tankSide(s.team).barrel : 2)
+  const ear = camera.position
+  if (s && s !== G.driving) {
+    s.firedAt = performance.now()
+    effects.gunBlast(muzzle, dir)
+    audio.cannon(muzzle, muzzle.distanceTo(ear))
+  }
+  effects.tracer(muzzle, e, 900)
+  const below = rayMap(RAPIER, world, [e.x, e.y + 0.2, e.z], [0, -1, 0], 0.8)
+  const scorch = below && below.normal[1] > 0.5 ? { point: new THREE.Vector3(e.x, e.y + 0.2 - below.dist, e.z), normal: below.normal } : null
+  effects.explosion(e.clone().addScaledVector(dir, -0.3), scorch)
+  const dist = e.distanceTo(ear)
+  audio.explosion(e, dist)
+  if (player.alive) G.shake = Math.max(G.shake, Math.max(0, 1 - dist / 35) ** 2)
+})
+
+net.on('tankboom', (d) => {
+  if (G.state !== 'playing') return
+  const pos = new THREE.Vector3(...d.p)
+  for (let i = 0; i < 4; i++) {
+    effects.explosion(pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 3, 0.6 + i * 0.5, (Math.random() - 0.5) * 4)), null)
+  }
+  const dist = pos.distanceTo(camera.position)
+  audio.explosion(pos, dist)
+  if (player.alive) G.shake = Math.max(G.shake, Math.max(0, 1 - dist / 50) ** 2)
+})
+
+// our tank took a hit
+net.on('tdmg', (d) => {
+  const s = G.driving
+  if (!s) return
+  s.hp = d.hp
+  const ang = Math.atan2(-(d.from[0] - s.pos[0]), -(d.from[2] - s.pos[2])) - player.yaw
+  hud.damageFlash(-ang)
+  audio.click(260, 0.6, 0.09)
 })
 
 net.on('shot', (d) => {
@@ -529,10 +616,12 @@ net.on('kill', (d) => {
   const victim = G.roster.get(d.v)
   hud.killfeed(killer, victim, d.w, d.hs, G.myId)
   if (d.v === G.myId && player) {
+    // killed in a tank: the death camera starts from the chase camera, not inside the hull
+    player.deathPos = G.driving ? camera.position.clone() : player.eyePos(new THREE.Vector3())
+    stopDriving()
     player.alive = false
     player.hp = 0
     player.deathAt = performance.now()
-    player.deathPos = player.eyePos(new THREE.Vector3())
     G.respawnAt = performance.now() + MATCH.respawnDelay * 1000
     G.killerName = killer && killer.id !== G.myId ? killer.name : ''
     input.mouse.left = false
@@ -578,7 +667,7 @@ function coneDir (fwd, spread) {
 function rayPlayers (o, d, maxT) {
   let best = null
   for (const a of avatars.map.values()) {
-    if (!a.alive) continue
+    if (!a.exposed) continue
     const h = rayVsPlayer(o, d, maxT, a.pos.x, a.pos.y, a.pos.z, a.crouched)
     if (h && (!best || h.t < best.t)) best = { ...h, avatar: a }
   }
@@ -595,7 +684,9 @@ function fireShot (spread) {
   const o = [tmpO.x, tmpO.y, tmpO.z]
   const d = [dir.x, dir.y, dir.z]
   const mh = rayMap(RAPIER, world, o, d, w.range)
-  const maxT = mh ? mh.dist : w.range
+  let maxT = mh ? mh.dist : w.range
+  const th = tanks?.ray(o, d, maxT)
+  if (th) maxT = th.t
   const ph = rayPlayers(o, d, maxT)
   const t = ph ? ph.t : maxT
   const end = tmpO.clone().addScaledVector(dir, t)
@@ -604,11 +695,14 @@ function fireShot (spread) {
   effects.muzzle(muzzle)
   if (ph) {
     effects.blood(end, dir.clone().negate())
+  } else if (th) {
+    effects.sparks(end, [-dir.x, -dir.y, -dir.z])
   } else if (mh) {
     effects.impact(end, mh.normal)
   }
   const msg = { w: weapons.id, o: o.map(r2), e: [r2(end.x), r2(end.y), r2(end.z)] }
   if (ph && ph.avatar.team !== G.team) msg.hit = { id: ph.avatar.id, zone: ph.zone }
+  else if (!ph && th && th.tank.team !== G.team) msg.hit = { tank: th.tank.id }
   net.emit('fire', msg)
 }
 const r2 = (v) => Math.round(v * 100) / 100
@@ -638,7 +732,7 @@ function knifeStrike () {
   const d = [tmpV.x, tmpV.y, tmpV.z]
   let best = null
   for (const a of avatars.map.values()) {
-    if (!a.alive || a.team === G.team) continue
+    if (!a.exposed || a.team === G.team) continue
     const r = knifeReach(o, d, a.pos.x, a.pos.y, a.pos.z, a.crouched)
     if (r.dist > KNIFE.range || r.angle > KNIFE.cone || (best && r.dist >= best.r.dist)) continue
     if (lineOfSight(RAPIER, world, o, r.at)) best = { a, r }
@@ -661,9 +755,13 @@ function crosshairTarget () {
   const o = [tmpO.x, tmpO.y, tmpO.z]
   const d = [tmpV.x, tmpV.y, tmpV.z]
   const mh = rayMap(RAPIER, world, o, d, 150)
-  const ph = rayPlayers(o, d, mh ? mh.dist : 150)
-  if (!ph) return null
-  return { name: ph.avatar.name, friendly: ph.avatar.team === G.team }
+  let maxT = mh ? mh.dist : 150
+  const th = tanks?.ray(o, d, maxT, G.driving)
+  if (th) maxT = th.t
+  const ph = rayPlayers(o, d, maxT)
+  if (ph) return { name: ph.avatar.name, friendly: ph.avatar.team === G.team }
+  if (th) return { name: tankSide(th.tank.team).name, friendly: th.tank.team === G.team }
+  return null
 }
 
 // ------------------------------------------------------------------ boot
@@ -688,6 +786,8 @@ async function boot () {
     }
     progress(0.95, 'Letting the cats out…')
     cats = await loadCats('/assets/cats/cats.glb', scene, audio)
+    progress(0.97, 'Fuelling the tanks…')
+    tanks = await loadTanks(scene, RAPIER, world)
     fitSunToBounds(sun, mapData.bounds)
     player = new LocalPlayer(RAPIER, world)
     grenades = new Grenades(scene, RAPIER, world)
@@ -737,12 +837,15 @@ function frame () {
   effects.update(dt)
   drops.update()
   bomb.update()
-  if (G.state === 'playing') cats?.update(dt, avatars.renderTime(INTERP_DELAY), camera.position)
+  if (G.state === 'playing') {
+    cats?.update(dt, avatars.renderTime(INTERP_DELAY), camera.position)
+    tanks?.update(dt, avatars.renderTime(INTERP_DELAY), (pos) => effects.smoke(pos))
+  }
   grenades?.update(dt, (pos, impact) => audio.nadeBounce(pos, Math.min(1, impact / 10)))
   cars?.update(camera.position, dt)
   renderer.clear()
   renderer.render(scene, camera)
-  if (G.state === 'playing' && player?.alive) viewmodel.render(renderer, 58 - (BASE_FOV - fovCurrent) * 0.35)
+  if (G.state === 'playing' && player?.alive && !G.driving) viewmodel.render(renderer, 58 - (BASE_FOV - fovCurrent) * 0.35)
   if (G.trace) G.trace.push([now, camera.position.x, camera.position.y, camera.position.z])
   input.endFrame()
 }
@@ -772,18 +875,69 @@ function updateGame (dt, now) {
   lookDX = ldx * fovScale; lookDY = ldy * fovScale
   if (player.alive) player.look(lookDX, lookDY)
 
+  const canAct = player.alive && locked && G.match.state === 'playing' && !loadoutMenu.isOpen
+  // Search and Destroy: hold F to plant or defuse; the server decides whether it counts, and we hold still meanwhile
+  const sdLive = G.match.mode === 'sd' && G.match.roundState === 'live'
+  const wantUse = canAct && !G.driving && sdLive && input.down('KeyF')
+  if (wantUse !== G.useHeld) { G.useHeld = wantUse; net.emit('use', { on: wantUse }, true) }
+  const acting = !!G.act
+  // E climbs into our side's tank when standing beside it, and out again
+  const board = canAct && !G.driving && !acting && !weapons.busy ? tanks?.boardable(G.team, player.pos) : null
+  if (canAct && input.wasPressed('KeyE') && (G.driving || board)) net.emit('tank', { on: !G.driving }, true)
+
+  if (G.driving) driveTank(dt, now, G.driving, canAct)
+  else moveOnFoot(dt, now, canAct, acting)
+
+  // remote players
+  avatars.update(dt, INTERP_DELAY)
+
+  // audio listener
+  const fwd = camera.getWorldDirection(tmpV)
+  audio.setListener(camera.position, fwd)
+
+  hud.update(dt)
+  hud.scores(G.match, G.team)
+  const secs = (G.matchEndsLocal - now) / 1000
+  const sd = G.match.mode === 'sd'
+  hud.timer(secs, G.match.state === 'playing' && (sd ? sdLive && (!!G.match.bomb || secs <= 15) : secs <= 60))
+  const next = G.pending ? `Next spawn: ${loadoutLabel(G.pending)}` : 'Press B to change loadout'
+  if (sd) {
+    // between rounds the result banner takes the centre of the screen
+    const title = player.deathPos ? 'You were killed' : 'Round in progress'
+    hud.death(!player.alive && G.match.state === 'playing' && G.match.roundState === 'live', player.deathPos ? G.killerName : '', 0, next, title, 'You join in at the start of the next round')
+  } else {
+    hud.death(!player.alive && player.deathPos && G.match.state === 'playing', G.killerName, (G.respawnAt - now) / 1000, next)
+  }
+  const sites = updateObjectives(now, sdLive, acting, board ? `Press <kbd>E</kbd> to drive the ${tankSide(board.team).name}` : '')
+  hud.scoreboard(input.down('Tab') || G.match.state === 'ended', G.roster, G.match, G.myId, G.aliveIds)
+  hud.netstat(G.myPing, G.fps)
+  const others = []
+  for (const a of avatars.map.values()) {
+    if (!a.alive || a.inTank) continue
+    const friendly = a.team === G.team
+    // COD2 compass: enemies only show up while firing
+    if (!friendly && !(a.flags & 16)) continue
+    others.push({ x: a.pos.x, z: a.pos.z, friendly })
+  }
+  for (const t of tanks?.map.values() ?? []) {
+    if (t.destroyed || t === G.driving) continue
+    const friendly = t.team === G.team
+    if (!friendly && now - t.firedAt > 2000) continue
+    others.push({ x: t.pos[0], z: t.pos[2], friendly, tank: true })
+  }
+  hud.compass(player.pos, player.alive ? player.yaw : camera.rotation.y, others, sites)
+}
+
+function moveOnFoot (dt, now, canAct, acting) {
+  hud.tankGun(null)
+  hud.gunSight(null)
+  audio.engine(0)
   // weapon controls
   let switchTo = null
   if (input.wasPressed('Digit1')) switchTo = 0
   if (input.wasPressed('Digit2')) switchTo = 1
   if (input.wasPressed('KeyQ')) switchTo = weapons.prevIndex
   if (input.mouse.wheel) switchTo = (weapons.index + 1) % weapons.slots.length
-  const canAct = player.alive && locked && G.match.state === 'playing' && !loadoutMenu.isOpen
-  // Search and Destroy: hold F to plant or defuse; the server decides whether it counts, and we hold still meanwhile
-  const sdLive = G.match.mode === 'sd' && G.match.roundState === 'live'
-  const wantUse = canAct && sdLive && input.down('KeyF')
-  if (wantUse !== G.useHeld) { G.useHeld = wantUse; net.emit('use', { on: wantUse }, true) }
-  const acting = !!G.act
   const armed = canAct && !acting
   const shots = weapons.update(dt, {
     trigger: armed && input.mouse.left,
@@ -797,6 +951,10 @@ function updateGame (dt, now) {
     sprint: player.sprinting,
     alive: canAct
   }, { speed: player.speed, grounded: player.grounded, crouched: player.crouched })
+
+  // tanks drive through soldiers: step out from under a friendly one rather than stay stuck in its hull
+  const out = player.alive && tanks?.pushOut(player.pos)
+  if (out) player.teleport(out)
 
   // movement (frozen while the loadout screen is up, or while planting / defusing)
   const steer = !loadoutMenu.isOpen && !acting
@@ -884,13 +1042,6 @@ function updateGame (dt, now) {
     net.emit('st', [player.life, r2(p.x), r2(p.y), r2(p.z), Math.round(player.yaw * 1000) / 1000, Math.round(player.pitch * 1000) / 1000, flags, ws.index, Math.round(now)])
   }
 
-  // remote players
-  avatars.update(dt, INTERP_DELAY)
-
-  // audio listener
-  const fwd = camera.getWorldDirection(tmpV)
-  audio.setListener(camera.position, fwd)
-
   // viewmodel (hidden behind the scope overlay when a scoped rifle is fully raised)
   const scoped = player.alive && ws.def.scope && ws.adsT > 0.85
   viewmodel.scoped = scoped
@@ -915,46 +1066,110 @@ function updateGame (dt, now) {
     alive: player.alive
   })
 
-  // HUD
-  hud.update(dt)
   hud.health(player.hp, player.alive)
   hud.weapon(ws)
   const spread = ws.spread({ speed: player.speed, grounded: player.grounded, crouched: player.crouched })
   hud.crosshair(spread, fovCurrent, player.alive && ws.adsT < 0.5 && !ws.reloading && ws.sprintT < 0.5 && !ws.busy, player.alive ? crosshairTarget() : null)
-  hud.scores(G.match, G.team)
-  const secs = (G.matchEndsLocal - now) / 1000
-  const sd = G.match.mode === 'sd'
-  hud.timer(secs, G.match.state === 'playing' && (sd ? sdLive && (!!G.match.bomb || secs <= 15) : secs <= 60))
-  const next = G.pending ? `Next spawn: ${loadoutLabel(G.pending)}` : 'Press B to change loadout'
-  if (sd) {
-    // between rounds the result banner takes the centre of the screen
-    const title = player.deathPos ? 'You were killed' : 'Round in progress'
-    hud.death(!player.alive && G.match.state === 'playing' && G.match.roundState === 'live', player.deathPos ? G.killerName : '', 0, next, title, 'You join in at the start of the next round')
-  } else {
-    hud.death(!player.alive && player.deathPos && G.match.state === 'playing', G.killerName, (G.respawnAt - now) / 1000, next)
+}
+
+const CAM_BACK = 8 // metres behind the turret
+const camFwd = new THREE.Vector3()
+const camBack = new THREE.Vector3()
+const camPivot = new THREE.Vector3()
+const gunPt = new THREE.Vector3()
+
+// W/S throttle, A/D turn the hull, the mouse swings the camera and the turret follows it, LMB fires
+function driveTank (dt, now, s, canAct) {
+  const steer = !loadoutMenu.isOpen
+  const key = (a, b) => steer && (input.down(a) || input.down(b))
+  const throttle = (key('KeyW', 'ArrowUp') ? 1 : 0) - (key('KeyS', 'ArrowDown') ? 1 : 0)
+  const turn = (key('KeyA', 'ArrowLeft') ? 1 : 0) - (key('KeyD', 'ArrowRight') ? 1 : 0)
+  if (!s.destroyed) s.body.drive(dt, throttle, turn)
+  const b = s.body.pos
+  s.pos = [b.x, b.y, b.z]
+  s.yaw = s.body.yaw
+  const sd = tankSide(s.team)
+  // we ride in the turret: the death camera and the minimap start from here
+  player.teleport([b.x, b.y + sd.hullH + 0.9 - PLAYER.eye, b.z])
+
+  // third-person camera behind the turret, pulled in where a wall would come between them
+  player.pitch = Math.max(-0.5, Math.min(0.45, player.pitch))
+  const yaw = player.yaw; const pitch = player.pitch
+  camFwd.set(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch))
+  camPivot.set(b.x, b.y + sd.hullH + 1.5, b.z)
+  camBack.copy(camFwd).negate()
+  camBack.y += 0.4
+  camBack.normalize()
+  const wall = rayMap(RAPIER, world, camPivot.toArray(), camBack.toArray(), CAM_BACK)
+  const back = wall ? Math.max(0.8, wall.dist - 0.3) : CAM_BACK
+  camera.position.copy(camPivot).addScaledVector(camBack, back)
+  const kick = Math.max(0, 1 - (now - s.firedAt) / 300) ** 2 * 0.05
+  camera.rotation.set(pitch + kick, yaw, 0)
+  if (G.shake > 0.001) {
+    camera.rotation.x += (Math.random() - 0.5) * 0.06 * G.shake
+    camera.rotation.y += (Math.random() - 0.5) * 0.06 * G.shake
   }
-  const sites = updateObjectives(now, sdLive, acting)
-  hud.scoreboard(input.down('Tab') || G.match.state === 'ended', G.roster, G.match, G.myId, G.aliveIds)
-  hud.netstat(G.myPing, G.fps)
-  const others = []
-  for (const a of avatars.map.values()) {
-    if (!a.alive) continue
-    const friendly = a.team === G.team
-    // COD2 compass: enemies only show up while firing
-    if (!friendly && !(a.flags & 16)) continue
-    others.push({ x: a.pos.x, z: a.pos.z, friendly })
+  G.shake *= Math.exp(-dt * 4)
+  if (fovCurrent !== BASE_FOV) { fovCurrent = BASE_FOV; camera.fov = BASE_FOV; camera.updateProjectionMatrix() }
+  camera.updateMatrixWorld()
+  hud.scope(false)
+
+  // what the crosshair is on, looking past the tank itself
+  const o = camera.position.clone().addScaledVector(camFwd, back).toArray()
+  const d = camFwd.toArray()
+  let reach = TANK.range
+  const mh = rayMap(RAPIER, world, o, d, reach)
+  if (mh) reach = mh.dist
+  const th = tanks.ray(o, d, reach, s)
+  if (th) reach = th.t
+  const ph = rayPlayers(o, d, reach)
+  if (ph) reach = ph.t
+  const aim = gunPt.fromArray(o).addScaledVector(camFwd, Math.max(reach, 8))
+  // the turret traverses and the gun elevates towards it, at their own pace
+  const g = gunRay(s).o
+  const wx = aim.x - g[0]; const wy = aim.y - g[1]; const wz = aim.z - g[2]
+  const wantYaw = Math.atan2(-wx, -wz)
+  const wantPitch = Math.max(TANK.pitchMin, Math.min(TANK.pitchMax, Math.atan2(wy, Math.hypot(wx, wz))))
+  const dy = wrapAngle(wantYaw - s.turret)
+  s.turret = wrapAngle(s.turret + Math.sign(dy) * Math.min(Math.abs(dy), TANK.traverse * dt))
+  s.gun += Math.sign(wantPitch - s.gun) * Math.min(Math.abs(wantPitch - s.gun), TANK.elevate * dt)
+
+  const ready = now >= G.tankReadyAt
+  const gr = gunRay(s)
+  if (canAct && ready && !s.destroyed && input.mouse.left) {
+    G.tankReadyAt = now + TANK.reload * 1000
+    net.emit('shell', { t: r3(s.turret), g: r3(s.gun) }, true)
+    s.firedAt = now
+    effects.gunBlast(new THREE.Vector3(...gr.muzzle), new THREE.Vector3(...gr.d))
+    audio.cannon()
+    G.shake = Math.max(G.shake, 0.35)
   }
-  hud.compass(player.pos, player.alive ? player.yaw : camera.rotation.y, others, sites)
+  audio.engine(s.destroyed ? 0 : 0.15 + Math.min(1, Math.abs(s.body.speed) / TANK.speed + Math.abs(turn) * 0.3) * 0.85)
+
+  if (now - G.lastSend >= 1000 / INPUT_RATE - 4) {
+    G.lastSend = Math.max(G.lastSend + 1000 / INPUT_RATE, now - 50)
+    net.emit('tk', [player.life, r2(b.x), r2(b.y), r2(b.z), r3(s.yaw), r3(s.turret), r3(s.gun), Math.round(now)])
+  }
+
+  // the gun's own sight: where a shell would land now, which trails the crosshair while the turret swings round
+  const gh = rayMap(RAPIER, world, gr.o, gr.d, TANK.range)
+  gunPt.fromArray(gr.o).addScaledVector(tmpV.fromArray(gr.d), gh ? gh.dist : TANK.range).project(camera)
+  const onScreen = gunPt.z < 1 && Math.abs(gunPt.x) < 1 && Math.abs(gunPt.y) < 1
+  hud.gunSight(onScreen ? (gunPt.x + 1) / 2 * window.innerWidth : null, (1 - gunPt.y) / 2 * window.innerHeight, ready)
+  hud.health(s.hp, true, TANK.maxHealth, 'ARMOUR')
+  hud.tankGun(sd.gunName, ready ? 1 : 1 - (G.tankReadyAt - now) / (TANK.reload * 1000))
+  hud.crosshair(0.003, BASE_FOV, true, crosshairTarget())
 }
 
 const markV = new THREE.Vector3()
 
 // Search and Destroy HUD: round line, use prompt, plant / defuse bar and the site markers; returns the minimap marks
-function updateObjectives (now, live, acting) {
+// extra: a prompt to show when Search and Destroy has none (the tank)
+function updateObjectives (now, live, acting, extra = '') {
   const m = G.match
   if (m.mode !== 'sd' || !m.attackers || m.state !== 'playing') {
     hud.roundInfo('', false)
-    hud.usePrompt('')
+    hud.usePrompt(extra)
     hud.act(-1)
     hud.markers([])
     return []
@@ -975,7 +1190,7 @@ function updateObjectives (now, live, acting) {
       prompt = 'Hold <kbd>F</kbd> to defuse the bomb'
     }
   }
-  hud.usePrompt(prompt)
+  hud.usePrompt(prompt || extra)
   hud.act(G.act ? (now - G.act.at) / G.act.ms : -1, G.act?.k === 'plant' ? 'Planting the bomb' : 'Defusing the bomb')
 
   const targets = b
@@ -1034,6 +1249,8 @@ window.__labin = {
     drops: [...drops.live].map(([id, d]) => ({ id, pos: d.mesh.position.toArray().map(r2) })),
     knifing: weapons.knifing,
     cats: cats ? [...cats.map].map(([id, c]) => ({ id, state: c.state, pos: c.pos.toArray().map(r2) })) : [],
+    tanks: tanks ? [...tanks.map.values()].map((t) => ({ id: t.id, team: t.team, hp: t.hp, driver: t.driver, destroyed: t.destroyed, pos: t.pos.map(r2) })) : [],
+    driving: G.driving?.id ?? 0,
     sprinting: player?.sprinting,
     speed: player?.speed,
     loadout: G.loadout,

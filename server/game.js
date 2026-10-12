@@ -16,6 +16,8 @@ import { NavGrid } from './navgrid.js'
 import { Bot } from './bot.js'
 import { Cats, CAT } from './cats.js'
 import { SearchAndDestroy } from './sd.js'
+import { Tanks } from './tanks.js'
+import { armourFor } from '../shared/tanks.js'
 
 const TEAM_IDS = ['allies', 'axis']
 const r2 = (v) => Math.round(v * 100) / 100
@@ -35,6 +37,7 @@ export class Game {
     this.startedAt = Date.now()
     this.botNames = [...BOT_NAMES].sort(() => Math.random() - 0.5)
     this.botsEnabled = true
+    this.tanksEnabled = false
     this.mode = 'tdm'
     this.sd = null // the Search and Destroy rounds while that mode is on
   }
@@ -55,6 +58,7 @@ export class Game {
     console.log(`[game] map loaded: ${this.map.colliders.length} colliders, nav ${this.nav.w}x${this.nav.h} ` +
       `(${this.nav.walkableCount} walkable) baked in ${Date.now() - t0}ms`)
     this.cats = new Cats(this)
+    this.tanks = new Tanks(this) // after the nav grid: parked tanks must not carve it
 
     this.match = { state: 'playing', scores: { allies: 0, axis: 0 }, endsAt: this.now() + MATCH.timeLimit * 1000, restartAt: 0, winner: null }
     this.io.onConnection((ch) => this.onConnection(ch))
@@ -91,6 +95,10 @@ export class Game {
     channel.on('bots', (data) => { const p = channel.player; if (p) this.handleBots(p, data) })
     channel.on('mode', (data) => { const p = channel.player; if (p) this.handleMode(p, data) })
     channel.on('use', (data) => { const p = channel.player; if (p) this.sd?.use(p, data?.on) })
+    channel.on('tanks', (data) => { const p = channel.player; if (p) this.handleTanks(p, data) })
+    channel.on('tank', (data) => { const p = channel.player; if (p) data?.on ? this.tanks.enter(p) : this.tanks.exit(p) })
+    channel.on('tk', (data) => { const p = channel.player; if (p) this.tanks.state(p, data) })
+    channel.on('shell', (data) => { const p = channel.player; if (p) this.tanks.fire(p, data) })
     channel.on('pong', (data) => { const p = channel.player; if (p && data && typeof data.t === 'number') p.ping = Math.max(0, this.now() - data.t) })
     channel.on('chat', (data) => {
       const p = channel.player
@@ -132,6 +140,7 @@ export class Game {
     if (!p) return
     console.log(`[game] ${p.name} left`)
     this.players.delete(p.id)
+    if (p.tank) this.tanks.eject(p.tank)
     channel.player = null
     this.balanceBots()
     this.broadcastRoster()
@@ -194,7 +203,8 @@ export class Game {
       lastFire: {},
       lastKnife: -1e9,
       lastStateAt: 0,
-      firedAt: -1e9
+      firedAt: -1e9,
+      tank: null // the tank this soldier is driving
     }
     this.players.set(p.id, p)
     if (isBot) p.bot = new Bot(this, p)
@@ -254,6 +264,7 @@ export class Game {
     p.pitch = 0
     p.hp = PLAYER.maxHealth
     p.alive = true
+    p.tank = null
     p.crouch = false
     p.life++
     p.respawnAt = 0
@@ -324,6 +335,7 @@ export class Game {
     if (now - p.lastTeamSwitch < MATCH.teamSwitchCooldown * 1000) return deny('Wait a moment before switching again')
     if (!this.teamAllowed(team, p)) return deny('Teams would be unbalanced')
     p.lastTeamSwitch = now
+    if (p.tank) this.tanks.eject(p.tank)
     // leaving the field is not a death: no score change, back to the loadout screen
     p.alive = false
     p.cookAt = 0
@@ -353,6 +365,19 @@ export class Game {
     this.emitAll('notice', { m: `${p.name} turned bots ${data.on ? 'on' : 'off'}` }, true)
   }
 
+  // any player can switch the tanks for the whole server; switching them back on does not replace one lost this match
+  handleTanks (p, data) {
+    const now = this.now()
+    if (typeof data?.on !== 'boolean' || data.on === this.tanksEnabled) return
+    if (now - (p.lastTankToggle ?? -Infinity) < MATCH.tankToggleCooldown * 1000) return
+    p.lastTankToggle = now
+    this.tanksEnabled = data.on
+    console.log(`[game] ${p.name} turned tanks ${data.on ? 'on' : 'off'}`)
+    this.tanks.spawnAll()
+    this.broadcastRoster()
+    this.emitAll('notice', { m: `${p.name} turned tanks ${data.on ? 'on' : 'off'}` }, true)
+  }
+
   // any player can switch the mode for the whole server; it starts a fresh match
   handleMode (p, data) {
     const now = this.now()
@@ -369,7 +394,7 @@ export class Game {
   // ------------------------------------------------------------------ client messages
 
   handleState (p, s) {
-    if (!Array.isArray(s) || s.length < 8 || !p.alive || s[0] !== p.life) return
+    if (!Array.isArray(s) || s.length < 8 || !p.alive || p.tank || s[0] !== p.life) return
     const [, x, y, z, yaw, pitch, flags, weapon] = s
     if (![x, y, z, yaw, pitch].every(Number.isFinite)) return
     const now = this.now()
@@ -384,16 +409,7 @@ export class Game {
       return
     }
     p.pos = [x, y, z]
-    p.posAt = now
-    // place the sample at the time the client took it (client clock + min-filtered offset), so packet jitter
-    // doesn't turn into speed jitter for everyone watching this player
-    const ct = s[8]
-    if (Number.isFinite(ct)) {
-      const off = now - ct
-      if (p.clockOff == null || off < p.clockOff || off - p.clockOff > 1000) p.clockOff = off
-      else p.clockOff += (off - p.clockOff) * 0.01
-      p.posAt = Math.min(now, Math.max(now - 250, ct + p.clockOff))
-    }
+    p.posAt = this.sampleTime(p, s[8], now)
     p.yaw = yaw
     p.pitch = Math.max(-1.55, Math.min(1.55, pitch))
     p.crouch = !!(flags & 2)
@@ -403,8 +419,18 @@ export class Game {
     p.lastStateAt = now
   }
 
+  // places a client's sample at the time the client took it (client clock + min-filtered offset), so packet jitter
+  // doesn't turn into speed jitter for everyone watching
+  sampleTime (p, ct, now) {
+    if (!Number.isFinite(ct)) return now
+    const off = now - ct
+    if (p.clockOff == null || off < p.clockOff || off - p.clockOff > 1000) p.clockOff = off
+    else p.clockOff += (off - p.clockOff) * 0.01
+    return Math.min(now, Math.max(now - 250, ct + p.clockOff))
+  }
+
   handleFire (p, msg) {
-    if (!p.alive || !msg) return
+    if (!p.alive || p.tank || !msg) return
     // only the weapons the server issued for this life, of the player's own faction, with rounds left
     const id = msg.w
     if (!canUse(p.team, id) || (id !== p.loadout.primary && id !== p.loadout.secondary)) return
@@ -424,13 +450,18 @@ export class Game {
 
     const hit = msg.hit
     if (!hit || this.match.state !== 'playing') return
-    const target = this.players.get(hit.id)
-    if (!target || !target.alive || target.team === p.team) return
     // validation: shooter origin near server position, target near claimed hit point, map not in the way
     const eyeY = p.pos[1] + (p.crouch ? PLAYER.crouchEye : PLAYER.eye)
     if (Math.hypot(o[0] - p.pos[0], o[1] - eyeY, o[2] - p.pos[2]) > 3) return
     const dist = Math.hypot(e[0] - o[0], e[1] - o[1], e[2] - o[2])
     if (dist > w.range) return
+    if (hit.tank) {
+      const block = dist > 0.5 && rayMap(this.RAPIER, this.world, o, [(e[0] - o[0]) / dist, (e[1] - o[1]) / dist, (e[2] - o[2]) / dist], dist)
+      if (!block || block.dist >= dist - 0.4) this.tanks.bullet(p, id, hit.tank, o, e, dist)
+      return
+    }
+    const target = this.players.get(hit.id)
+    if (!target || !target.alive || target.tank || target.team === p.team) return
     const tc = [target.pos[0], target.pos[1] + 1.0, target.pos[2]]
     if (Math.hypot(e[0] - tc[0], e[1] - tc[1], e[2] - tc[2]) > 3.2) return
     const d = [(e[0] - o[0]) / dist, (e[1] - o[1]) / dist, (e[2] - o[2]) / dist]
@@ -442,14 +473,14 @@ export class Game {
 
   // { k: the client's throw number }: the fuse is timed here, so a client cannot claim a longer or shorter cook
   handleCook (p, msg) {
-    if (!p.alive || !(p.grenades > 0) || p.cookAt) return
+    if (!p.alive || p.tank || !(p.grenades > 0) || p.cookAt) return
     p.cookAt = this.now()
     p.cookK = nadeKey(msg?.k)
   }
 
   // { o: eye position, d: view direction, k: the client's throw number (pairs its own visual with the blast) }
   handleNade (p, msg) {
-    if (!p.alive || !(p.grenades > 0) || !msg) return
+    if (!p.alive || p.tank || !(p.grenades > 0) || !msg) return
     const o = msg.o; const d = msg.d
     if (!validVec(o) || !validVec(d)) return
     const eyeY = p.pos[1] + (p.crouch ? PLAYER.crouchEye : PLAYER.eye)
@@ -461,7 +492,7 @@ export class Game {
 
   // { o: eye position, d: view direction, hit: id of the enemy the client saw within reach, if any }
   handleKnife (p, msg) {
-    if (!p.alive || !msg) return
+    if (!p.alive || p.tank || !msg) return
     if (this.now() - p.lastKnife < (KNIFE.windup + KNIFE.recover) * 1000 * 0.7) return
     const o = msg.o; const d = msg.d
     if (!validVec(o) || !validVec(d)) return
@@ -477,7 +508,7 @@ export class Game {
   knife (p, o, d, target, slack = 0) {
     p.lastKnife = this.now()
     this.emitOthers(p, 'stab', { id: p.id })
-    if (!target || !target.alive || target.team === p.team || this.match.state !== 'playing') return
+    if (!target || !target.alive || target.tank || target.team === p.team || this.match.state !== 'playing') return
     const r = knifeReach(o, d, target.pos[0], target.pos[1], target.pos[2], target.crouch)
     if (r.dist > KNIFE.range + slack || r.angle > KNIFE.cone + slack * 0.5) return
     if (!lineOfSight(this.RAPIER, this.world, o, r.at)) return
@@ -522,20 +553,26 @@ export class Game {
     this.cats.scare(g.pos, CAT.blastRadius)
     const thrower = this.players.get(g.owner)
     if (!thrower || this.match.state !== 'playing') return
-    const c = [g.pos[0], g.pos[1] + 0.2, g.pos[2]]
+    this.blast([g.pos[0], g.pos[1] + 0.2, g.pos[2]], thrower, g.team, blastDamage, GRENADE.id, g.pos)
+  }
+
+  // a blast at c set off by attacker for team: hurts the attacker and everyone not on that team, soldiers and tanks;
+  // from: where the damage indicator points; direct: a tank the shell struck
+  blast (c, attacker, team, damageAt, weapon, from = c, direct = null) {
     for (const q of this.players.values()) {
-      if (!q.alive || (q.team === g.team && q !== thrower)) continue
+      if (!q.alive || q.tank || (q.team === team && q !== attacker)) continue
       // the blast reaches whichever of feet, chest and head is closest with nothing solid in between
       const h = q.crouch ? PLAYER.crouchHeight : PLAYER.height
       let dist = Infinity
       for (const y of [0.3, h * 0.6, h - 0.15]) {
         const pt = [q.pos[0], q.pos[1] + y, q.pos[2]]
         const dd = Math.hypot(pt[0] - c[0], pt[1] - c[1], pt[2] - c[2])
-        if (dd < dist && dd < GRENADE.blastRadius && lineOfSight(this.RAPIER, this.world, c, pt)) dist = dd
+        if (dd < dist && damageAt(dd) > 0 && lineOfSight(this.RAPIER, this.world, c, pt)) dist = dd
       }
-      const dmg = blastDamage(dist)
-      if (dmg > 0) this.applyDamage(q, thrower, dmg, GRENADE.id, 'body', g.pos)
+      const dmg = damageAt(dist)
+      if (dmg > 0) this.applyDamage(q, attacker, dmg, weapon, 'body', from)
     }
+    this.tanks.blast(c, attacker, team, damageAt, weapon, direct)
   }
 
   // Fires a bot weapon along dir from origin; resolves hits server-side.
@@ -544,8 +581,10 @@ export class Game {
     const mapHit = rayMap(this.RAPIER, this.world, o, d, w.range)
     let maxT = mapHit ? mapHit.dist : w.range
     let victim = null; let zone = null
+    const armour = this.tanks.ray(o, d, maxT)
+    if (armour) maxT = armour.t
     for (const q of this.players.values()) {
-      if (q === p || !q.alive || q.team === p.team) continue
+      if (q === p || !q.alive || q.tank || q.team === p.team) continue
       const h = rayVsPlayer(o, d, maxT, q.pos[0], q.pos[1], q.pos[2], q.crouch)
       if (h) { maxT = h.t; victim = q; zone = h.zone }
     }
@@ -554,7 +593,9 @@ export class Game {
     this.emitAll('shot', { id: p.id, w: weapon, o: o.map(r2), e: e.map(r2), n: victim ? 0 : 1 })
     this.cats.hearShot(o, e)
     for (const q of this.players.values()) if (q.isBot && q.team !== p.team && q !== p) q.bot.hear(p)
-    if (victim && this.match.state === 'playing') this.applyDamage(victim, p, damageFor(weapon, maxT, zone), weapon, zone)
+    if (this.match.state !== 'playing') return
+    if (victim) this.applyDamage(victim, p, damageFor(weapon, maxT, zone), weapon, zone)
+    else if (armour && armour.tank.team !== p.team) this.tanks.damage(armour.tank, p, damageFor(weapon, maxT, 'body') * armourFor(weapon), weapon, o)
   }
 
   // from: where the damage came from (the attacker, or the blast for grenades)
@@ -576,6 +617,7 @@ export class Game {
 
   kill (victim, attacker, weapon, headshot) {
     victim.alive = false
+    if (victim.tank) this.tanks.eject(victim.tank)
     victim.hp = 0
     victim.deaths++
     victim.respawnAt = this.now() + MATCH.respawnDelay * 1000
@@ -638,6 +680,7 @@ export class Game {
   restartMatch () {
     this.match = { state: 'playing', scores: { allies: 0, axis: 0 }, endsAt: this.now() + MATCH.timeLimit * 1000, restartAt: 0, winner: null }
     for (const p of this.players.values()) { p.kills = 0; p.deaths = 0 }
+    this.tanks.newMatch()
     this.emitAll('notice', { m: `New match: ${MODES[this.mode].name}` }, true)
     if (this.mode === 'sd') {
       this.sd = new SearchAndDestroy(this)
@@ -704,12 +747,12 @@ export class Game {
     const list = []
     for (const p of this.players.values()) {
       const flags = (p.alive ? 1 : 0) | (p.crouch ? 2 : 0) | (p.ads ? 4 : 0) | (p.reloading ? 8 : 0) |
-        (now - p.firedAt < 400 ? 16 : 0) | (now < p.protectUntil ? 32 : 0)
+        (now - p.firedAt < 400 ? 16 : 0) | (now < p.protectUntil ? 32 : 0) | (p.tank ? 64 : 0)
       const age = Math.max(0, Math.min(1000, Math.round(now - p.posAt)))
       const weapon = WEAPON_CODE[p.slot === 1 ? p.loadout.secondary : p.loadout.primary]
       list.push([p.id, r2(p.pos[0]), r2(p.pos[1]), r2(p.pos[2]), r3(p.yaw), r3(p.pitch), flags, weapon, Math.round(p.hp), p.life, age])
     }
-    this.emitAll('snap', { t: now, p: list, c: this.cats.snapshot() })
+    this.emitAll('snap', { t: now, p: list, c: this.cats.snapshot(), k: this.tanks.snapshot(now) })
   }
 
   roster () {
@@ -729,6 +772,7 @@ export class Game {
       winner: m.winner,
       scoreLimit: this.sd ? SD.roundsToWin : MATCH.scoreLimit,
       bots: this.botsEnabled,
+      tanks: this.tanksEnabled,
       timeLeft: Math.max(0, Math.round(left / 1000)),
       msLeft: Math.max(0, Math.round(left)),
       ...this.sd?.info()

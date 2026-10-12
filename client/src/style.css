@@ -50,6 +50,12 @@ canvas#game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: b
 #crosshair .b { top: var(--crosshair-gap); }
 #crosshair .l { right: var(--crosshair-gap); }
 #crosshair .r { left: var(--crosshair-gap); }
+/* tank: where the gun points, which lags the view while the turret traverses */
+#gun-mark { position: absolute; left: -11px; top: -11px; width: 22px; height: 22px; border: 2px solid rgba(255, 140, 110, 0.85); border-radius: 50%; display: none; }
+#gun-mark.show { display: block; }
+#gun-mark.ready { border-color: rgba(239, 230, 200, 0.95); }
+#hud.driving #ammo .sep, #hud.driving #ammo-reserve, #hud.driving #ammo-bullets, #hud.driving #nades, #hud.driving #fuse { display: none; }
+#hud.driving #ammo-mag { font-size: 30px; }
 #crosshair.enemy i { background: #ff5b4a; }
 #crosshair.friend i { background: #7fd7ff; }
 

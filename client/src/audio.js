@@ -1,4 +1,5 @@
-// Procedural WebAudio: gunshots (local + spatialised remote), reload/dry clicks, knife, pickups, footsteps, hit/kill cues, cats.
+// Procedural WebAudio: gunshots (local + spatialised remote), reload/dry clicks, knife, pickups, footsteps, hit/kill cues, cats,
+// tank guns and the engine of the tank we drive.
 // Each weapon's report is shaped by its fx.sound profile in shared/weapons.js.
 import { WEAPONS } from '@shared/weapons.js'
 
@@ -387,6 +388,59 @@ export class Audio {
     rg.gain.exponentialRampToValueAtTime(0.0001, t + 1.8 + far)
     r.connect(rg); rg.connect(dest)
     r.start(t, Math.random() * 0.3, 1.45)
+  }
+
+  // a tank gun: a hard crack on top of the explosion's thump, heard across the whole map
+  cannon (pos = null, dist = 0) {
+    if (!this.ctx || !this.enabled) return
+    const ctx = this.ctx
+    const t = ctx.currentTime
+    const dest = this.out(pos)
+    if (pos) dest.refDistance = 18
+    const n = ctx.createBufferSource()
+    n.buffer = this.noise
+    const bp = ctx.createBiquadFilter()
+    bp.type = 'lowpass'
+    bp.frequency.setValueAtTime(6000 * (1 - Math.min(0.8, dist / 150)), t)
+    bp.frequency.exponentialRampToValueAtTime(180, t + 0.25)
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0.0001, t)
+    g.gain.exponentialRampToValueAtTime(2, t + 0.003)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35)
+    n.connect(bp); bp.connect(g); g.connect(dest)
+    n.start(t, Math.random() * 0.5, 0.4)
+    const o = ctx.createOscillator()
+    o.type = 'sine'
+    o.frequency.setValueAtTime(70, t)
+    o.frequency.exponentialRampToValueAtTime(24, t + 0.6)
+    const og = ctx.createGain()
+    og.gain.setValueAtTime(1.6, t)
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.7)
+    o.connect(og); og.connect(dest)
+    o.start(t); o.stop(t + 0.75)
+  }
+
+  // the engine of the tank we drive: level 0 is off, 1 flat out
+  engine (level) {
+    if (!this.ctx || !this.enabled) return
+    const ctx = this.ctx
+    if (!this.motor) {
+      if (level <= 0) return
+      const src = ctx.createBufferSource()
+      src.buffer = this.brown
+      src.loop = true
+      const lp = ctx.createBiquadFilter()
+      lp.type = 'lowpass'
+      const g = ctx.createGain()
+      g.gain.value = 0
+      src.connect(lp); lp.connect(g); g.connect(this.master)
+      src.start()
+      this.motor = { src, lp, g }
+    }
+    const t = ctx.currentTime
+    this.motor.g.gain.setTargetAtTime(level > 0 ? 0.25 + level * 0.35 : 0, t, 0.15)
+    this.motor.lp.frequency.setTargetAtTime(110 + level * 260, t, 0.2)
+    this.motor.src.playbackRate.setTargetAtTime(0.7 + level * 0.6, t, 0.2)
   }
 
   footstep (pos = null, vol = 0.12) {

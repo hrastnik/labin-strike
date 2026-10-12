@@ -1,14 +1,15 @@
 // Drives the real authoritative Game through fake channels: loadout validation, faction restrictions,
-// ammunition, team switching, bot loadouts, grenades, sprint movement, ammo drops, the knife and the cats.
+// ammunition, team switching, bot loadouts, grenades, sprint movement, ammo drops, the knife, the cats and the tanks.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Game } from '../server/game.js'
 import { MATCH, PLAYER } from '../shared/constants.js'
-import { WEAPONS, WEAPON_LIST, GRENADE, KNIFE, AMMO_DROP, CLASS_IDS, isValidLoadout, startingAmmo, sanitizeLoadout } from '../shared/weapons.js'
+import { WEAPONS, WEAPON_LIST, GRENADE, KNIFE, AMMO_DROP, CLASS_IDS, isValidLoadout, startingAmmo, sanitizeLoadout, damageFor } from '../shared/weapons.js'
 import { NADE_DT, createGrenade, stepGrenade } from '../shared/grenade.js'
-import { lineOfSight } from '../shared/physics.js'
+import { lineOfSight, rayMap } from '../shared/physics.js'
+import { TANK, tankPoint, gunRay, armourFor, underHull } from '../shared/tanks.js'
 import { CAT, CAT_STATE, CAT_COATS } from '../server/cats.js'
 import { SD, SD_SITES, otherTeam } from '../shared/modes.js'
 
@@ -774,4 +775,230 @@ test('S&D: bots plant at their site when nobody is around, and defending bots ru
   assert.deepEqual([sd.state, sd.winner, sd.reason], ['over', sd.defenders, 'defused'])
   ch.disconnect()
   endSd()
+})
+
+// ------------------------------------------------------------------ Tanks
+
+// two humans and no bots, with the tanks switched on by the axis soldier
+function tankMatch () {
+  game.botsEnabled = false
+  game.balanceBots()
+  const ax = connect('Yankee', { team: 'axis' })
+  const al = connect('Zulu', { team: 'allies' })
+  const a = deploy(ax, AXIS_KIT)
+  const b = deploy(al, ALLIES_KIT)
+  clock += MATCH.tankToggleCooldown * 1000
+  ax.send('tanks', { on: true })
+  for (const p of [a, b]) p.protectUntil = 0
+  return { ax, al, a, b, tank: (team) => game.tanks.list.find((t) => t.team === team) }
+}
+
+function endTanks (...chs) {
+  for (const ch of chs) ch.disconnect()
+  game.tanksEnabled = false
+  game.mode = 'tdm'
+  game.botsEnabled = true
+  game.restartMatch()
+  game.balanceBots()
+}
+
+// standing on the ground just off the tank's left side
+const beside = (t) => tankPoint(t, -(TANK.half[0] + 0.6), 0, 0)
+
+function climbIn (ch, t) {
+  ch.player.pos = beside(t)
+  ch.send('tank', { on: true })
+  assert.equal(ch.player.tank, t)
+}
+
+// a point straight down the gun's line, short of whatever solid it would hit first
+function downTheBarrel (t, want) {
+  const { o, d } = gunRay(t)
+  const mh = rayMap(game.RAPIER, game.world, o, d, 250)
+  const m = Math.min(want, (mh ? mh.dist : 250) - 1)
+  assert.ok(m > 4, `room in front of the ${t.team} tank (${m})`)
+  return [o[0] + d[0] * m, o[1], o[2] + d[2] * m]
+}
+
+test('tanks: any player switches them on for the whole server, one per side, parked clear of the spawns', () => {
+  assert.equal(game.tanks.list.length, 0, 'off by default')
+  const { ax, al } = tankMatch()
+  assert.equal(al.last('roster').match.tanks, true)
+  assert.match(al.last('notice').m, /Yankee turned tanks on/)
+  assert.deepEqual(game.tanks.list.map((t) => t.team).sort(), ['allies', 'axis'])
+  for (const t of game.tanks.list) {
+    assert.equal(t.hp, TANK.maxHealth)
+    for (const s of game.map.spawns[t.team]) assert.equal(underHull(t, s[0], s[1], s[2], 1), false, 'no spawn point under the hull')
+  }
+  game.broadcastSnapshot()
+  assert.equal(al.last('snap').k.length, 2)
+  al.send('tanks', { on: false })
+  assert.equal(game.tanks.list.length, 0)
+  endTanks(ax, al)
+})
+
+test("tanks: a soldier climbs into their own side's tank only, one at a time, and steps out beside it", () => {
+  const { ax, al, a, b, tank } = tankMatch()
+  const mine = tank('axis')
+  a.pos = beside(tank('allies'))
+  ax.send('tank', { on: true })
+  assert.equal(a.tank, null, "not the enemy's")
+  a.pos = tankPoint(mine, -(TANK.half[0] + 3), 0, 0)
+  ax.send('tank', { on: true })
+  assert.equal(a.tank, null, 'out of reach')
+  climbIn(ax, mine)
+  assert.equal(mine.driver, a.id)
+  assert.equal(ax.last('drive').id, mine.id)
+  const mate = connect('Alfa', { team: 'axis' })
+  const c = deploy(mate, AXIS_KIT)
+  c.pos = beside(mine)
+  mate.send('tank', { on: true })
+  assert.equal(c.tank, null, 'taken')
+  game.broadcastSnapshot()
+  assert.ok(al.last('snap').p.find((e) => e[0] === a.id)[6] & 64, 'snapshots say who is inside')
+  assert.equal(fire(ax, 'mp40'), false, 'no rifle out of the hatch')
+
+  ax.send('tank', { on: false })
+  assert.equal(a.tank, null)
+  assert.equal(mine.driver, 0)
+  const out = ax.last('drive')
+  assert.equal(out.id, 0)
+  assert.deepEqual(a.pos, out.pos)
+  assert.equal(underHull(mine, ...out.pos, 0.2), false, 'out beside the hull, not in it')
+  assert.ok(Math.hypot(out.pos[0] - mine.pos[0], out.pos[2] - mine.pos[2]) < TANK.half[1] + 2)
+  mate.send('tank', { on: true })
+  assert.equal(c.tank, mine, 'free again')
+  mate.disconnect()
+  assert.equal(mine.driver, 0, 'a driver who leaves frees it')
+  endTanks(ax, al)
+})
+
+test('tanks: the driver moves the tank at its own pace, and a jump is pulled back', () => {
+  const { ax, al, a, tank } = tankMatch()
+  const t = tank('axis')
+  climbIn(ax, t)
+  const start = t.pos.slice()
+  clock += 1000
+  ax.send('tk', [a.life, start[0] + 4, start[1], start[2], t.yaw + 0.3, t.yaw + 1, 2, clock])
+  assert.deepEqual(t.pos, [start[0] + 4, start[1], start[2]])
+  assert.deepEqual(a.pos, t.pos, 'the driver rides along')
+  assert.equal(t.gun, TANK.pitchMax, 'the gun only elevates so far')
+  assert.deepEqual([t.body.pos.x, t.body.pos.z], [t.pos[0], t.pos[2]], 'the collider follows')
+  clock += 100
+  ax.send('tk', [a.life, t.pos[0] + 20, start[1], start[2], t.yaw, t.turret, 0, clock])
+  assert.equal(t.pos[0], start[0] + 4)
+  assert.deepEqual(ax.last('tp').pos, t.pos)
+  endTanks(ax, al)
+})
+
+test('tanks: small arms barely scratch one, a grenade hurts it, and the driver inside is out of reach', () => {
+  const { ax, al, a, b, tank } = tankMatch()
+  const t = tank('allies')
+  climbIn(al, t)
+  a.pos = beside(t)
+  const side = tankPoint(t, -TANK.half[0], 1, 0)
+  const o = [a.pos[0], a.pos[1] + PLAYER.eye, a.pos[2]]
+  const dist = Math.hypot(side[0] - o[0], side[1] - o[1], side[2] - o[2])
+  assert.equal(fire(ax, 'mp40', { e: side, hit: { tank: t.id } }), true)
+  assert.equal(t.hp, TANK.maxHealth - damageFor('mp40', dist, 'body') * armourFor('mp40'))
+  assert.ok(t.hp > TANK.maxHealth - 5)
+  assert.equal(ax.last('hit').tank, t.id)
+  assert.equal(al.last('tdmg').a, a.id)
+  fire(ax, 'mp40', { e: [b.pos[0], b.pos[1] + 1.6, b.pos[2]], hit: { id: b.id, zone: 'head' } })
+  assert.equal(b.hp, PLAYER.maxHealth, 'the driver is behind armour')
+
+  const hp = t.hp
+  a.pos = [a.pos[0], a.pos[1] + 40, a.pos[2]]
+  game.explode({ pos: tankPoint(t, -(TANK.half[0] + 0.5), 0.05, 0), owner: a.id, team: a.team, k: 0 })
+  assert.ok(hp - t.hp > 200, `a grenade at the tracks (${hp - t.hp})`)
+  assert.equal(b.hp, PLAYER.maxHealth)
+  endTanks(ax, al)
+})
+
+test('tanks: the cannon reloads between shells, kills soldiers in the blast, and burns out the enemy tank for the rest of the match', () => {
+  const { ax, al, a, b, tank } = tankMatch()
+  const mine = tank('axis'); const theirs = tank('allies')
+  climbIn(ax, mine)
+  const shells = () => al.count('shell')
+  const at = downTheBarrel(mine, 9)
+  b.pos = [at[0], at[1] - 1.2, at[2]]
+  clock += TANK.reload * 1000
+  ax.send('shell', { t: mine.turret, g: 0 })
+  assert.equal(shells(), 1)
+  assert.equal(b.alive, false)
+  assert.deepEqual([al.last('kill').k, al.last('kill').w], [a.id, TANK.gunId])
+  ax.send('shell', { t: mine.turret, g: 0 })
+  assert.equal(shells(), 1, 'still reloading')
+
+  advance((MATCH.respawnDelay + 0.5) * 1000)
+  assert.ok(b.alive)
+  b.protectUntil = 0
+  climbIn(al, theirs)
+  const p = downTheBarrel(mine, 12)
+  theirs.pos = [p[0], mine.pos[1], p[2]]
+  let n = 0
+  while (!theirs.destroyed && n < 10) {
+    clock += TANK.reload * 1000
+    ax.send('shell', { t: mine.turret, g: 0 })
+    n++
+  }
+  assert.equal(n, Math.ceil(TANK.maxHealth / (TANK.damage * armourFor(TANK.gunId))), 'shells it takes')
+  assert.equal(al.last('tankboom').id, theirs.id)
+  assert.equal(b.alive, false, 'the crew goes with it')
+  assert.equal(b.tank, null)
+  assert.equal(al.last('drive').id, theirs.id, 'the kill tells the crew, not a drive message that would set them down in the hull')
+  assert.equal(al.last('kill').w, TANK.gunId)
+
+  advance((MATCH.respawnDelay + 0.5) * 1000)
+  b.pos = beside(theirs)
+  al.send('tank', { on: true })
+  assert.equal(b.tank, null, 'nobody drives a wreck')
+  clock += MATCH.tankToggleCooldown * 1000
+  al.send('tanks', { on: false })
+  clock += MATCH.tankToggleCooldown * 1000
+  al.send('tanks', { on: true })
+  assert.deepEqual(game.tanks.list.map((t) => t.team), ['axis'], 'switching them off and on does not bring it back')
+  game.restartMatch()
+  assert.deepEqual(game.tanks.list.map((t) => t.team).sort(), ['allies', 'axis'], 'a new match does')
+  endTanks(ax, al)
+})
+
+test('tanks: the tracks crush an enemy the tank rolls over, not one it creeps up to', () => {
+  const { ax, al, a, b, tank } = tankMatch()
+  const t = tank('axis')
+  climbIn(ax, t)
+  const move = (m, ms) => {
+    clock += ms
+    const p = tankPoint(t, 0, 0, -m)
+    ax.send('tk', [a.life, p[0], p[1], p[2], t.yaw, t.turret, 0, clock])
+  }
+  b.pos = tankPoint(t, 0, 0, -(TANK.half[1] + 0.3))
+  move(0.5, 1000)
+  assert.ok(b.alive, 'creeping')
+  b.pos = tankPoint(t, 0, 0, -(TANK.half[1] + 1))
+  move(2, 300)
+  assert.equal(b.alive, false)
+  assert.equal(al.last('kill').w, TANK.crushId)
+  endTanks(ax, al)
+})
+
+test('tanks: in S&D every round starts with both tanks back home and empty', () => {
+  const { ax, al, a, b, tank } = tankMatch()
+  game.mode = 'sd'
+  game.restartMatch()
+  const t = tank('axis')
+  const home = t.pos.slice()
+  climbIn(ax, t)
+  clock += 1000
+  ax.send('tk', [a.life, home[0] + 3, home[1], home[2], t.yaw, t.turret, 0, clock])
+  ax.send('use', { on: true })
+  assert.equal(game.sd.actionFor(a), null, 'no planting from inside')
+  game.sd.endRound('axis', 'time')
+  advance(SD.roundOver * 1000 + 100)
+  assert.equal(game.sd.round, 2)
+  assert.deepEqual(t.pos, home)
+  assert.equal(t.driver, 0)
+  assert.equal(a.tank, null)
+  assert.ok(a.alive)
+  endTanks(ax, al)
 })
