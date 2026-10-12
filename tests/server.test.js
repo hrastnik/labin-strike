@@ -565,10 +565,12 @@ test('bots knife an enemy standing in front of them, and humans see the stab', (
 
 test('cats wander the map on their own and show up in snapshots', () => {
   const ch = connect('Tango', { team: 'allies' })
-  const start = game.cats.list.map((c) => c.pos.slice())
   // a cat with nothing to do mostly goes for a stroll somewhere nearby
+  // earlier tests can leave a cat near the end of a walk, too close to its goal to cover the distance checked below
+  for (const c of game.cats.list) { c.state = CAT_STATE.idle; c.path = null }
   for (const c of game.cats.list) for (let i = 0; i < 50 && c.state !== CAT_STATE.walk; i++) game.cats.decide(c, clock)
   assert.ok(game.cats.list.every((c) => c.state === CAT_STATE.walk))
+  const start = game.cats.list.map((c) => c.pos.slice())
   for (const c of game.cats.list) c.calmAt = 0
   for (let i = 0; i < 200; i++) { clock += 33; game.cats.move.call(game.cats, game.cats.list[0], 0.033, clock) }
   assert.ok(Math.hypot(game.cats.list[0].pos[0] - start[0][0], game.cats.list[0].pos[2] - start[0][2]) > 0.5, 'went for a stroll')
