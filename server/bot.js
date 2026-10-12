@@ -1,7 +1,8 @@
 // Server-side TDM bot: patrols via the nav grid, acquires targets by line of sight,
 // tracks them with human-like turn rates / aim error and fires bursts with weapon spread.
 import { PLAYER, WEAPONS } from '../shared/constants.js'
-import { GRENADE } from '../shared/weapons.js'
+import { GRENADE, KNIFE } from '../shared/weapons.js'
+import { knifeReach } from '../shared/hitbox.js'
 import { CharacterMotor, lineOfSight } from '../shared/physics.js'
 
 const TAU = Math.PI * 2
@@ -54,6 +55,7 @@ export class Bot {
     this.lastHurtAt = -1e9
     this.aimHead = false
     this.nadeRollAt = 0
+    this.knifeReadyAt = 0
   }
 
   dispose () { this.motor.dispose() }
@@ -165,6 +167,7 @@ export class Bot {
       crouch = this.wantCrouch
       let fwd = 0
       if (flat > 38) fwd = 0.7
+      else if (flat < 3 || (this.reloadUntil && flat < 6)) { fwd = 1; this.strafeDir = 0; crouch = false } // close in with the knife
       else if (flat < 6) fwd = -0.6
       const fx = -Math.sin(lookYaw); const fz = -Math.cos(lookYaw)
       const rx = -fz; const rz = fx
@@ -181,7 +184,8 @@ export class Bot {
         wishX = mx * sp; wishZ = mz * sp
       }
       this.path = null
-      this.tryFire(now, tgt, flat, ml > 0.01)
+      if (this.tryKnife(now, tgt, eye)) this.nextShotAt = Math.max(this.nextShotAt, now + KNIFE.recover * 1000)
+      else this.tryFire(now, tgt, flat, ml > 0.01)
     } else {
       this.burstLeft = 0
       if (active) this.maybeThrowGrenade(now)
@@ -306,6 +310,19 @@ export class Bot {
       this.reloadUntil = now + w.reloadTime * 1000
       this.burstShots = 0
     }
+  }
+
+  tryKnife (now, tgt, eye) {
+    if (now < this.reactUntil || now < this.knifeReadyAt) return false
+    const h = tgt.crouch ? PLAYER.crouchHeight : PLAYER.height
+    const dx = tgt.pos[0] - eye[0]; const dy = tgt.pos[1] + h * 0.6 - eye[1]; const dz = tgt.pos[2] - eye[2]
+    const len = Math.hypot(dx, dy, dz)
+    const d = [dx / len, dy / len, dz / len]
+    if (knifeReach(eye, d, tgt.pos[0], tgt.pos[1], tgt.pos[2], tgt.crouch).dist > KNIFE.range) return false
+    if (Math.abs(wrap(Math.atan2(-dx, -dz) - this.p.yaw)) > KNIFE.cone) return false
+    this.knifeReadyAt = now + (KNIFE.windup + KNIFE.recover) * 1000 + 150 + Math.random() * 350
+    this.g.knife(this.p, eye, d, tgt)
+    return true
   }
 
   // lob the grenade at an enemy who just ducked out of sight

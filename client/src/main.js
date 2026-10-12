@@ -3,10 +3,10 @@ import './style.css'
 import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { PLAYER, INPUT_RATE, INTERP_DELAY, MATCH, TEAMS } from '@shared/constants.js'
-import { WEAPONS, CLASSES, sanitizeLoadout } from '@shared/weapons.js'
+import { WEAPONS, CLASSES, KNIFE, sanitizeLoadout } from '@shared/weapons.js'
 import { parseGlbJson, extractMapData } from '@shared/mapdata.js'
-import { buildMapWorld, rayMap } from '@shared/physics.js'
-import { rayVsPlayer } from '@shared/hitbox.js'
+import { buildMapWorld, rayMap, lineOfSight } from '@shared/physics.js'
+import { rayVsPlayer, knifeReach } from '@shared/hitbox.js'
 import { createRenderer, createScene, fitSunToBounds, fetchMap, parseMap } from './renderer.js'
 import { loadCars } from './cars.js'
 import { Input } from './input.js'
@@ -16,6 +16,7 @@ import { Viewmodel } from './viewmodel.js'
 import { Avatars } from './avatars.js'
 import { Effects } from './effects.js'
 import { Grenades } from './grenades.js'
+import { Drops } from './drops.js'
 import { Audio } from './audio.js'
 import { Hud } from './hud.js'
 import { Net } from './net.js'
@@ -71,6 +72,7 @@ const weapons = new WeaponSystem()
 const viewmodel = new Viewmodel()
 const avatars = new Avatars(scene)
 const effects = new Effects(scene)
+const drops = new Drops(scene)
 const audio = new Audio()
 const hud = new Hud()
 const net = new Net()
@@ -237,6 +239,7 @@ function leave (msg) {
   if (player) player.alive = false
   avatars.clear()
   grenades?.clear()
+  drops.clear()
   G.roster.clear()
   showMenu(true)
   hud.pause(false)
@@ -265,6 +268,8 @@ net.on('welcome', (d) => {
   store.set('lastTeam', d.team)
   if (player) { player.life = 0; player.alive = false; player.deathPos = null }
   setRoster(d.roster, d.match)
+  drops.clear()
+  for (const dr of d.drops || []) drops.add(dr)
   viewmodel.setTeam(d.team)
   hud.setTeam(d.team)
   G.state = 'playing'
@@ -406,6 +411,24 @@ net.on('boom', (d) => {
   if (player.alive) G.shake = Math.max(G.shake, Math.max(0, 1 - dist / 30) ** 2)
 })
 
+net.on('drop', (d) => { if (G.state === 'playing') drops.add(d) })
+net.on('undrop', (d) => drops.remove(d.i))
+
+net.on('ammo', (d) => {
+  if (!player?.alive || d.life !== player.life) return
+  weapons.addAmmo(d.a)
+  hud.pickup(d.a)
+  audio.pickup()
+})
+
+net.on('stab', (d) => {
+  if (G.state !== 'playing') return
+  const a = avatars.map.get(d.id)
+  if (!a?.alive) return
+  a.stab()
+  audio.knifeSwing(a.pos.clone().setY(a.pos.y + 1.2))
+})
+
 net.on('dmg', (d) => {
   if (!player) return
   player.hp = d.hp
@@ -529,6 +552,31 @@ function throwGrenade () {
   audio.nadeThrow()
 }
 
+// the client picks who the blade reaches; the server re-checks reach, angle and line of sight
+function knifeStrike () {
+  if (!player.alive) return
+  camera.getWorldPosition(tmpO)
+  camera.getWorldDirection(tmpV)
+  const o = [tmpO.x, tmpO.y, tmpO.z]
+  const d = [tmpV.x, tmpV.y, tmpV.z]
+  let best = null
+  for (const a of avatars.map.values()) {
+    if (!a.alive || a.team === G.team) continue
+    const r = knifeReach(o, d, a.pos.x, a.pos.y, a.pos.z, a.crouched)
+    if (r.dist > KNIFE.range || r.angle > KNIFE.cone || (best && r.dist >= best.r.dist)) continue
+    if (lineOfSight(RAPIER, world, o, r.at)) best = { a, r }
+  }
+  const msg = { o: o.map(r2), d: d.map(r3) }
+  if (best) {
+    msg.hit = best.a.id
+    const at = new THREE.Vector3(...best.r.at)
+    const back = tmpO.clone().sub(at).setY(0).normalize()
+    effects.blood(at.addScaledVector(back, PLAYER.radius), back)
+    audio.knifeHit()
+  }
+  net.emit('knife', msg, true)
+}
+
 // what's under the crosshair (for name display / crosshair colour)
 function crosshairTarget () {
   camera.getWorldPosition(tmpO)
@@ -608,6 +656,7 @@ function frame () {
   }
 
   effects.update(dt)
+  drops.update()
   grenades?.update(dt, (pos, impact) => audio.nadeBounce(pos, Math.min(1, impact / 10)))
   cars?.update(camera.position, dt)
   renderer.clear()
@@ -656,6 +705,7 @@ function updateGame (dt, now) {
     reload: canAct && input.wasPressed('KeyR'),
     switchTo: player.alive && !loadoutMenu.isOpen ? switchTo : null,
     throwNade: canAct && input.wasPressed('KeyG'),
+    knife: canAct && input.wasPressed('KeyV'),
     sprint: player.sprinting,
     alive: canAct
   }, { speed: player.speed, grounded: player.grounded, crouched: player.crouched })
@@ -666,7 +716,7 @@ function updateGame (dt, now) {
   const crouch = steer && (input.down('KeyC') || input.down('ControlLeft'))
   // aiming or pulling the trigger drops out of the sprint
   const sprint = forward && !crouch && (input.down('ShiftLeft') || input.down('ShiftRight')) &&
-    !(canAct && (input.mouse.left || input.mouse.right)) && !weapons.throwing
+    !(canAct && (input.mouse.left || input.mouse.right)) && !weapons.busy
   const move = player.update(dt, {
     f: forward,
     b: steer && (input.down('KeyS') || input.down('ArrowDown')),
@@ -724,6 +774,8 @@ function updateGame (dt, now) {
     else if (ev === 'ping') { audio.ping(); viewmodel.ping() }
     else if (ev === 'windup') audio.nadeWindup()
     else if (ev === 'throw') throwGrenade()
+    else if (ev === 'swing') audio.knifeSwing()
+    else if (ev === 'stab') knifeStrike()
   }
 
   // send state
@@ -757,6 +809,7 @@ function updateGame (dt, now) {
     reloadFrac: ws.reloading ? 1 - ws.reloadT / ws.reloadDur : -1,
     drawFrac: ws.drawing ? ws.drawT / ws.def.drawTime : 0,
     throwFrac: ws.throwFrac,
+    knifeFrac: ws.knifeFrac,
     cycleFrac: ws.cycleFrac,
     reloadSteps: ws.reloadSteps,
     mag: ws.clip.mag,
@@ -770,7 +823,7 @@ function updateGame (dt, now) {
   hud.health(player.hp, player.alive)
   hud.weapon(ws)
   const spread = ws.spread({ speed: player.speed, grounded: player.grounded, crouched: player.crouched })
-  hud.crosshair(spread, fovCurrent, player.alive && ws.adsT < 0.5 && !ws.reloading && ws.sprintT < 0.5 && !ws.throwing, player.alive ? crosshairTarget() : null)
+  hud.crosshair(spread, fovCurrent, player.alive && ws.adsT < 0.5 && !ws.reloading && ws.sprintT < 0.5 && !ws.busy, player.alive ? crosshairTarget() : null)
   hud.scores(G.match, G.team)
   hud.timer((G.matchEndsLocal - now) / 1000, G.match.state)
   const next = G.pending ? `Next spawn: ${loadoutLabel(G.pending)}` : 'Press B to change loadout'
@@ -822,6 +875,8 @@ window.__labin = {
     ammo: weapons.clip,
     grenades: weapons.grenades,
     grenadesInFlight: grenades?.live.size,
+    drops: [...drops.live].map(([id, d]) => ({ id, pos: d.mesh.position.toArray().map(r2) })),
+    knifing: weapons.knifing,
     sprinting: player?.sprinting,
     speed: player?.speed,
     loadout: G.loadout,

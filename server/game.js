@@ -4,18 +4,21 @@ import path from 'node:path'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { TICK_RATE, SNAPSHOT_RATE, MATCH, PLAYER, BOT_NAMES } from '../shared/constants.js'
 import {
-  WEAPONS, WEAPON_CODE, CLASS_IDS, CLASSES, GRENADE, damageFor, blastDamage, canUse, sanitizeLoadout, isValidLoadout, startingAmmo
+  WEAPONS, WEAPON_CODE, CLASS_IDS, CLASSES, GRENADE, KNIFE, AMMO_DROP, damageFor, blastDamage, canUse, sanitizeLoadout,
+  isValidLoadout, startingAmmo, ammoPickup
 } from '../shared/weapons.js'
 import { parseGlbJson, extractMapData } from '../shared/mapdata.js'
 import { buildMapWorld, rayMap, lineOfSight } from '../shared/physics.js'
 import { NADE_DT, createGrenade, stepGrenade } from '../shared/grenade.js'
-import { rayVsPlayer } from '../shared/hitbox.js'
+import { rayVsPlayer, knifeReach } from '../shared/hitbox.js'
 import { NavGrid } from './navgrid.js'
 import { Bot } from './bot.js'
 
 const TEAM_IDS = ['allies', 'axis']
 const r2 = (v) => Math.round(v * 100) / 100
 const r3 = (v) => Math.round(v * 1000) / 1000
+// how far a human's stab may be from what the server sees, for the target having moved while the stab was in flight
+const KNIFE_SLACK = 1.2
 
 export class Game {
   constructor (io, root) {
@@ -23,6 +26,8 @@ export class Game {
     this.root = root
     this.players = new Map()
     this.grenades = []
+    this.drops = []
+    this.nextDropId = 1
     this.nextId = 1
     this.startedAt = Date.now()
     this.botNames = [...BOT_NAMES].sort(() => Math.random() - 0.5)
@@ -72,6 +77,7 @@ export class Game {
     channel.on('st', (data) => { const p = channel.player; if (p) this.handleState(p, data) })
     channel.on('fire', (data) => { const p = channel.player; if (p) this.handleFire(p, data) })
     channel.on('nade', (data) => { const p = channel.player; if (p) this.handleNade(p, data) })
+    channel.on('knife', (data) => { const p = channel.player; if (p) this.handleKnife(p, data) })
     channel.on('loadout', (data) => { const p = channel.player; if (p) this.handleLoadout(p, data) })
     channel.on('team', (data) => { const p = channel.player; if (p) this.handleTeam(p, data) })
     channel.on('pong', (data) => { const p = channel.player; if (p && data && typeof data.t === 'number') p.ping = Math.max(0, this.now() - data.t) })
@@ -102,6 +108,7 @@ export class Game {
       loadout: p.loadout,
       roster: this.roster(),
       match: this.matchInfo(),
+      drops: this.drops.map((d) => this.dropInfo(d)),
       tick: TICK_RATE,
       snap: SNAPSHOT_RATE
     }, { reliable: true })
@@ -172,6 +179,7 @@ export class Game {
       deaths: 0,
       ping: 0,
       lastFire: {},
+      lastKnife: -1e9,
       lastStateAt: 0,
       firedAt: -1e9
     }
@@ -401,7 +409,30 @@ export class Game {
     this.throwGrenade(p, o, d.map((v) => v / len), k)
   }
 
+  // { o: eye position, d: view direction, hit: id of the enemy the client saw within reach, if any }
+  handleKnife (p, msg) {
+    if (!p.alive || !msg) return
+    if (this.now() - p.lastKnife < (KNIFE.windup + KNIFE.recover) * 1000 * 0.7) return
+    const o = msg.o; const d = msg.d
+    if (!validVec(o) || !validVec(d)) return
+    const eyeY = p.pos[1] + (p.crouch ? PLAYER.crouchEye : PLAYER.eye)
+    if (Math.hypot(o[0] - p.pos[0], o[1] - eyeY, o[2] - p.pos[2]) > 3) return
+    const len = Math.hypot(d[0], d[1], d[2])
+    if (len < 0.5 || len > 1.5) return
+    this.knife(p, o, d.map((v) => v / len), this.players.get(msg.hit), KNIFE_SLACK)
+  }
+
   // ------------------------------------------------------------------ combat
+
+  knife (p, o, d, target, slack = 0) {
+    p.lastKnife = this.now()
+    this.emitOthers(p, 'stab', { id: p.id })
+    if (!target || !target.alive || target.team === p.team || this.match.state !== 'playing') return
+    const r = knifeReach(o, d, target.pos[0], target.pos[1], target.pos[2], target.crouch)
+    if (r.dist > KNIFE.range + slack || r.angle > KNIFE.cone + slack * 0.5) return
+    if (!lineOfSight(this.RAPIER, this.world, o, r.at)) return
+    this.applyDamage(target, p, KNIFE.damage, KNIFE.id, 'body')
+  }
 
   throwGrenade (p, o, d, k = p.nadeSeq++) {
     const now = this.now()
@@ -487,8 +518,43 @@ export class Game {
       this.match.scores[attacker.team]++
     }
     this.emitAll('kill', { k: attacker?.id, v: victim.id, w: weapon, hs: headshot }, true)
+    this.dropAmmo(victim)
     if (this.match.scores[attacker?.team] >= MATCH.scoreLimit) this.endMatch(attacker.team)
     else this.broadcastRoster()
+  }
+
+  // ------------------------------------------------------------------ ammo drops
+
+  dropAmmo (victim) {
+    const [x, y, z] = victim.pos
+    const ground = rayMap(this.RAPIER, this.world, [x, y + 0.5, z], [0, -1, 0], 30)
+    const drop = { id: this.nextDropId++, pos: [x, ground ? y + 0.5 - ground.dist : y, z].map(r2), team: victim.team, expireAt: this.now() + AMMO_DROP.lifetime * 1000 }
+    this.drops.push(drop)
+    this.emitAll('drop', this.dropInfo(drop), true)
+    if (this.drops.length > AMMO_DROP.max) this.removeDrop(this.drops[0])
+  }
+
+  dropInfo (d) { return { i: d.id, p: d.pos, t: d.team, ttl: Math.max(0, d.expireAt - this.now()) } }
+
+  removeDrop (drop, by = 0) {
+    this.drops = this.drops.filter((d) => d !== drop)
+    this.emitAll('undrop', { i: drop.id, by }, true)
+  }
+
+  // the first soldier over a can who is short of ammunition takes it; anyone fully stocked leaves it lying
+  updateDrops (now) {
+    for (const drop of this.drops.slice()) {
+      if (now >= drop.expireAt) { this.removeDrop(drop); continue }
+      for (const q of this.players.values()) {
+        if (!q.alive || Math.abs(q.pos[1] - drop.pos[1]) > 1.2 || Math.hypot(q.pos[0] - drop.pos[0], q.pos[2] - drop.pos[2]) > AMMO_DROP.radius) continue
+        const gain = ammoPickup(q.loadout, q.ammo)
+        if (!Object.keys(gain).length) continue
+        for (const id in gain) q.ammo[id] += gain[id]
+        if (!q.isBot) q.channel.emit('ammo', { life: q.life, a: gain }, { reliable: true })
+        this.removeDrop(drop, q.id)
+        break
+      }
+    }
   }
 
   // ------------------------------------------------------------------ match flow
@@ -505,6 +571,7 @@ export class Game {
   restartMatch () {
     this.match = { state: 'playing', scores: { allies: 0, axis: 0 }, endsAt: this.now() + MATCH.timeLimit * 1000, restartAt: 0, winner: null }
     this.grenades = []
+    for (const d of this.drops.slice()) this.removeDrop(d)
     for (const p of this.players.values()) {
       p.kills = 0
       p.deaths = 0
@@ -524,6 +591,7 @@ export class Game {
       this.restartMatch()
     }
     this.updateGrenades(dt, now)
+    this.updateDrops(now)
     // with nobody connected the bots idle instead of burning CPU
     const anyHumans = this.humans().length > 0
     for (const p of this.players.values()) {

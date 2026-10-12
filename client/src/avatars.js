@@ -1,7 +1,7 @@
 // Remote players: procedural low-poly soldiers, snapshot interpolation and simple procedural animation.
 import * as THREE from 'three'
 import { PLAYER } from '@shared/constants.js'
-import { WEAPONS, WEAPON_LIST } from '@shared/weapons.js'
+import { WEAPONS, WEAPON_LIST, KNIFE } from '@shared/weapons.js'
 import { buildGun } from './gunmodels.js'
 
 const STYLE = {
@@ -17,6 +17,7 @@ function mat (color) {
 const SKIN = '#c49473'
 const FRIEND_TAG = '#8fd8ff'
 const GUNMETAL = '#2b2c2e'
+const STAB_TIME = KNIFE.windup + KNIFE.recover
 
 // one template per weapon; soldiers clone it (geometry and materials shared)
 const gunTemplates = new Map()
@@ -110,6 +111,7 @@ export class Avatar {
     this.deathT = 0
     this.deathDir = 1
     this.flashT = 0
+    this.stabT = 0
     this.lastPos = new THREE.Vector3()
     this.build()
   }
@@ -282,6 +284,7 @@ export class Avatar {
   }
 
   showFlash () { this.flashT = 0.06 }
+  stab () { this.stabT = STAB_TIME }
 
   animate (dt) {
     const root = this.root
@@ -312,6 +315,13 @@ export class Avatar {
     this.aim.rotation.x = this.pitch - this.torso.rotation.x
     this.head.rotation.x = this.pitch * 0.4
     this.torso.rotation.y = Math.sin(this.walkPhase) * 0.06 * sp
+    // knife: twist the shoulders into the stab and swing the arms down through it
+    if (this.stabT > 0) {
+      this.stabT = Math.max(0, this.stabT - dt)
+      const lunge = Math.sin((1 - this.stabT / STAB_TIME) * Math.PI)
+      this.torso.rotation.y -= 0.5 * lunge
+      this.aim.rotation.x -= 0.45 * lunge
+    }
 
     this.setWeapon(WEAPON_LIST[this.weapon] || 'stg44')
     if (this.flashT > 0) {

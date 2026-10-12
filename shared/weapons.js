@@ -695,6 +695,25 @@ export function blastDamage (distance) {
   return Math.round(damage * (1 - (distance - killRadius) / (blastRadius - killRadius)))
 }
 
+// Quick melee on V. Like the grenade it is equipment every soldier carries, outside the faction-checked loadout.
+export const KNIFE = {
+  id: 'knife',
+  name: { allies: 'M3 Trench Knife', axis: 'Seitengewehr 84/98' },
+  damage: 135,
+  range: 1.5, // metres from the eye to the surface of the target's body
+  cone: 0.6, // rad either side of the view direction
+  windup: 0.14, // seconds from pressing V to the strike
+  recover: 0.38 // seconds from the strike until the weapon is up again
+}
+
+// Every death leaves an ammunition can that anyone, on either side, can walk over to refill their own weapons.
+export const AMMO_DROP = {
+  share: 0.4, // of the class's starting reserve, per weapon
+  lifetime: 30, // seconds on the ground
+  radius: 1.1, // pickup reach in metres
+  max: 40
+}
+
 export const CLASS_IDS = Object.keys(CLASSES)
 export const DEFAULT_CLASS = 'assault'
 export const FACTIONS = ['allies', 'axis']
@@ -743,6 +762,18 @@ export function startingAmmo (cls, id, slot) {
   const w = WEAPONS[id]
   const mul = slot === 'secondary' ? c.secondaryReserveMul : c.reserveMul
   return { mag: w.mag, reserve: Math.round(w.reserve * mul) }
+}
+
+// rounds per weapon one ammo can gives a soldier holding `ammo` (weapon id -> magazine + reserve); never past a full spawn load
+export function ammoPickup (loadout, ammo) {
+  const gain = {}
+  for (const slot of ['primary', 'secondary']) {
+    const id = loadout[slot]
+    const a = startingAmmo(loadout.cls, id, slot)
+    const n = Math.min(Math.ceil(a.reserve * AMMO_DROP.share), a.mag + a.reserve - (ammo[id] ?? 0))
+    if (n > 0) gain[id] = n
+  }
+  return gain
 }
 
 export function damageFor (weapon, distance, zone) {

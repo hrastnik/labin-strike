@@ -141,6 +141,8 @@ canvas#game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: b
 #nades i.spent { filter: none; }
 #nades i.spent::before, #nades i.spent::after { background: rgba(255,255,255,.12); }
 #weapon-hint { font-size: 15px; color: var(--accent); margin-top: 6px; min-height: 20px; letter-spacing: 0.06em; }
+#pickup { font-size: 15px; color: #cfe39a; letter-spacing: 0.04em; min-height: 20px; opacity: 0; white-space: nowrap; }
+#pickup.show { animation: fadeout 2.5s forwards; }
 
 #damage-dirs { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
 #damage-dirs .dd {

@@ -1,4 +1,4 @@
-// Procedural WebAudio: gunshots (local + spatialised remote), reload/dry clicks, footsteps, hit/kill cues.
+// Procedural WebAudio: gunshots (local + spatialised remote), reload/dry clicks, knife, pickups, footsteps, hit/kill cues.
 // Each weapon's report is shaped by its fx.sound profile in shared/weapons.js.
 import { WEAPONS } from '@shared/weapons.js'
 
@@ -221,6 +221,45 @@ export class Audio {
     n.connect(f); f.connect(g); g.connect(this.master)
     n.start(t, Math.random(), 0.3)
   }
+
+  // blade cutting the air; pos null = local
+  knifeSwing (pos = null) {
+    if (!this.ctx) return
+    const ctx = this.ctx
+    const t = ctx.currentTime
+    const n = ctx.createBufferSource()
+    n.buffer = this.noise
+    const f = ctx.createBiquadFilter()
+    f.type = 'bandpass'
+    f.Q.value = 3
+    f.frequency.setValueAtTime(900, t + 0.08)
+    f.frequency.exponentialRampToValueAtTime(3800, t + 0.2)
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0.0001, t + 0.08)
+    g.gain.exponentialRampToValueAtTime(0.3, t + 0.15)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.26)
+    n.connect(f); f.connect(g); g.connect(this.out(pos))
+    n.start(t, Math.random(), 0.3)
+  }
+
+  knifeHit () {
+    if (!this.ctx) return
+    const ctx = this.ctx
+    const t = ctx.currentTime
+    const o = ctx.createOscillator()
+    o.type = 'triangle'
+    o.frequency.setValueAtTime(160, t)
+    o.frequency.exponentialRampToValueAtTime(60, t + 0.12)
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0.6, t)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15)
+    o.connect(g); g.connect(this.master)
+    o.start(t); o.stop(t + 0.18)
+    this.click(700, 0.35, 0.06)
+  }
+
+  // snapping the lid of an ammo can and stuffing the rounds away
+  pickup () { this.click(2400, 0.3, 0.03); this.click(1100, 0.3, 0.06, 0.08); this.click(900, 0.25, 0.08, 0.2) }
 
   // wooden handle and steel head knocking on the ground; strength 0..1
   nadeBounce (pos, strength) {

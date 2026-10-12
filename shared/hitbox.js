@@ -50,6 +50,16 @@ export function rayCapsule (ro, rd, pa, pb, r) {
   return -1
 }
 
+// knife from eye o along view d (normalized) to the player's body axis: { dist to the body surface, angle off d, at: axis point }
+export function knifeReach (o, d, x, y, z, crouch) {
+  const h = crouch ? PLAYER.crouchHeight : PLAYER.height
+  const at = [x, Math.max(y + 0.3, Math.min(y + h - 0.15, o[1])), z]
+  const v = sub(at, o)
+  const len = Math.hypot(v[0], v[1], v[2])
+  const angle = len > 1e-4 ? Math.acos(Math.max(-1, Math.min(1, dot(v, d) / len))) : 0
+  return { dist: Math.max(0, len - PLAYER.radius), angle, at }
+}
+
 // returns { t, zone } of the closest hit within maxT, or null
 export function rayVsPlayer (o, d, maxT, x, y, z, crouch) {
   // cheap reject against a bounding sphere around the player

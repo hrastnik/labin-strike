@@ -1,12 +1,12 @@
 // Drives the real authoritative Game through fake channels: loadout validation, faction restrictions,
-// ammunition, team switching, bot loadouts, grenades and sprint movement.
+// ammunition, team switching, bot loadouts, grenades, sprint movement, ammo drops and the knife.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Game } from '../server/game.js'
 import { MATCH, PLAYER } from '../shared/constants.js'
-import { WEAPONS, WEAPON_LIST, GRENADE, CLASS_IDS, isValidLoadout, startingAmmo, sanitizeLoadout } from '../shared/weapons.js'
+import { WEAPONS, WEAPON_LIST, GRENADE, KNIFE, AMMO_DROP, CLASS_IDS, isValidLoadout, startingAmmo, sanitizeLoadout } from '../shared/weapons.js'
 import { NADE_DT, createGrenade, stepGrenade } from '../shared/grenade.js'
 import { lineOfSight } from '../shared/physics.js'
 
@@ -364,5 +364,113 @@ test('sprinting passes the movement check, a teleport does not', () => {
   clock += 1000 / 30
   ch.send('st', [p.life, p.pos[0] + 6, p.pos[1], p.pos[2], 0, 0, 0, 0, clock])
   assert.equal(ch.count('tp'), tps + 1, 'teleport pulled back')
+  ch.disconnect()
+})
+
+test('every death leaves an ammo can on the ground under the body, gone after its lifetime', () => {
+  const ch = connect('Papa', { team: 'allies' })
+  const p = deploy(ch, { cls: 'assault', primary: 'thompson', secondary: 'm1911' })
+  const ground = p.pos[1]
+  p.pos = [p.pos[0], ground + 1.5, p.pos[2]] // killed in mid-jump
+  game.kill(p, null, 'thompson', false)
+  const can = ch.last('drop')
+  assert.equal(can.t, 'allies')
+  assert.ok(Math.abs(can.p[1] - ground) < 0.3, `on the ground (${can.p[1]} vs ${ground})`)
+  assert.equal(can.ttl, AMMO_DROP.lifetime * 1000)
+  const alive = () => game.drops.some((d) => d.id === can.i)
+  game.updateDrops(clock + AMMO_DROP.lifetime * 1000 - 100)
+  assert.ok(alive(), 'still there just before its time')
+  game.updateDrops(clock + AMMO_DROP.lifetime * 1000)
+  assert.ok(!alive(), 'despawned')
+  assert.equal(ch.sent.filter(([ev, d]) => ev === 'undrop' && d.i === can.i).length, 1)
+  ch.disconnect()
+})
+
+test('anyone short of ammunition takes a can from either side, topped up to no more than a full load', () => {
+  const ch = connect('Quebec', { team: 'axis' })
+  const p = deploy(ch, { cls: 'rifleman', primary: 'kar98k', secondary: 'luger' })
+  const full = { kar98k: p.ammo.kar98k, luger: p.ammo.luger }
+  game.dropAmmo({ pos: p.pos.slice(), team: 'allies' })
+  const can = ch.last('drop')
+  const lying = () => game.drops.some((d) => d.id === can.i)
+  game.updateDrops(clock)
+  assert.ok(lying(), 'a fully stocked soldier leaves it')
+  p.ammo.kar98k = 3
+  p.ammo.luger = full.luger - 2
+  game.updateDrops(clock)
+  const got = ch.last('ammo')
+  assert.equal(got.life, p.life)
+  assert.equal(got.a.kar98k, Math.ceil(startingAmmo('rifleman', 'kar98k', 'primary').reserve * AMMO_DROP.share))
+  assert.equal(got.a.luger, 2, 'only what fits')
+  assert.equal(p.ammo.kar98k, 3 + got.a.kar98k)
+  assert.equal(p.ammo.luger, full.luger)
+  assert.ok(!lying())
+  assert.equal(ch.last('undrop').by, p.id)
+  ch.disconnect()
+})
+
+test('a new round clears the cans, and joiners are sent the ones lying around', () => {
+  const a = connect('Uniform', { team: 'allies' })
+  deploy(a, { cls: 'assault', primary: 'thompson', secondary: 'm1911' })
+  game.dropAmmo({ pos: a.player.pos.slice(), team: 'axis' })
+  const b = connect('Victor', { team: 'axis' })
+  assert.ok(b.last('welcome').drops.some((d) => d.i === a.last('drop').i))
+  game.restartMatch()
+  assert.equal(game.drops.length, 0)
+  a.disconnect(); b.disconnect()
+})
+
+test('one knife stab kills an enemy in reach and in front, and nobody else', () => {
+  const ch = connect('Romeo', { team: 'axis' })
+  const p = deploy(ch, { cls: 'assault', primary: 'mp40', secondary: 'p38' })
+  const bots = [...game.players.values()].filter((q) => q.isBot && q.alive)
+  const enemy = bots.find((q) => q.team === 'allies')
+  const mate = bots.find((q) => q.team === 'axis')
+  const at = p.pos.slice()
+  const d = openDirection(at, 5)
+  const eye = [at[0], at[1] + PLAYER.eye, at[2]]
+  const place = (q, m) => { q.pos = [at[0] + d[0] * m, at[1], at[2] + d[2] * m]; q.protectUntil = 0; q.hp = PLAYER.maxHealth; q.crouch = false }
+  const stab = (q, dir = d, wait = 1000) => { clock += wait; ch.send('knife', { o: eye, d: dir, hit: q.id }) }
+
+  place(mate, 1)
+  stab(mate)
+  assert.equal(mate.hp, PLAYER.maxHealth, 'no friendly fire')
+  mate.pos[1] += 40
+  place(enemy, 4.5)
+  stab(enemy)
+  assert.equal(enemy.hp, PLAYER.maxHealth, 'out of reach')
+  place(enemy, 1)
+  stab(enemy, d.map((v) => -v))
+  assert.equal(enemy.hp, PLAYER.maxHealth, 'behind the attacker')
+  stab(enemy, d, 50)
+  assert.equal(enemy.hp, PLAYER.maxHealth, 'too soon after the last stab')
+
+  const kills = p.kills
+  stab(enemy)
+  assert.equal(enemy.alive, false)
+  assert.equal(p.kills, kills + 1)
+  assert.equal(ch.last('kill').w, KNIFE.id)
+  assert.equal(ch.last('hit').k, true)
+  ch.disconnect()
+})
+
+test('bots knife an enemy standing in front of them, and humans see the stab', () => {
+  const ch = connect('Sierra', { team: 'allies' })
+  const p = deploy(ch, { cls: 'assault', primary: 'thompson', secondary: 'm1911' })
+  const bot = [...game.players.values()].find((q) => q.isBot && q.alive && q.team === 'axis')
+  const at = p.pos.slice()
+  const d = openDirection(at, 3)
+  bot.pos = [at[0] + d[0], at[1], at[2] + d[2]]
+  bot.yaw = Math.atan2(d[0], d[2]) // facing back towards the player
+  bot.protectUntil = 0
+  p.protectUntil = 0
+  const b = bot.bot
+  b.motor.setPosition(...bot.pos)
+  Object.assign(b, { target: p.id, visible: true, reactUntil: 0, knifeReadyAt: 0, nextPerceive: Infinity })
+  b.update(1 / 30, clock, true)
+  assert.equal(p.alive, false)
+  assert.equal(ch.last('kill').w, KNIFE.id)
+  assert.equal(ch.last('kill').k, bot.id)
+  assert.equal(ch.last('stab').id, bot.id)
   ch.disconnect()
 })

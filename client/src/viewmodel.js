@@ -1,7 +1,7 @@
 // First-person weapon + arms, rendered in their own scene/camera pass so they never clip into walls.
 import * as THREE from 'three'
-import { WEAPONS, GRENADE } from '@shared/weapons.js'
-import { M, buildViewmodel, buildGrenadeViewmodel } from './gunmodels.js'
+import { WEAPONS, GRENADE, KNIFE } from '@shared/weapons.js'
+import { M, buildViewmodel, buildGrenadeViewmodel, buildKnifeViewmodel } from './gunmodels.js'
 
 const UNIFORM = { allies: '#5d6638', axis: '#5a6260' }
 
@@ -12,6 +12,14 @@ const NADE_LOW = new THREE.Vector3(0.3, -0.62, -0.45)
 const NADE_BACK = new THREE.Vector3(0.25, -0.17, -0.44)
 const NADE_FWD = new THREE.Vector3(0.08, -0.12, -0.75)
 const NADE_GONE = new THREE.Vector3(0.12, -0.75, -0.6)
+const STRIKE = KNIFE.windup / (KNIFE.windup + KNIFE.recover) // knifeFrac at which the blade connects
+// knife hand keyframes [knifeFrac, position, rotation]: raised on the right, then slashed flat across to the left
+const KNIFE_KEYS = [
+  [0, [0.34, -0.55, -0.38], [0.2, 0.1, -1.3]],
+  [STRIKE * 0.65, [0.26, -0.12, -0.44], [0.6, 0.15, -1.3]],
+  [STRIKE + 0.2, [-0.14, -0.22, -0.52], [-0.1, 0.9, -1.4]],
+  [1, [-0.22, -0.65, -0.42], [-0.3, 1.0, -1.4]]
+]
 
 function flashTexture () {
   const c = document.createElement('canvas')
@@ -74,6 +82,7 @@ export class Viewmodel {
 
     this.models = {} // weapon id -> built viewmodel (for the current team's sleeves)
     this.nadeVM = null
+    this.knifeVM = null
     this.team = null
     this.current = null
     this.bobPhase = 0
@@ -94,6 +103,8 @@ export class Viewmodel {
     this.current = null
     if (this.nadeVM) this.holder.remove(this.nadeVM.root)
     this.nadeVM = null
+    if (this.knifeVM) this.holder.remove(this.knifeVM.root)
+    this.knifeVM = null
   }
 
   model (id) {
@@ -163,7 +174,7 @@ export class Viewmodel {
 
   /**
    * s: { weapon, ads (0..1), sprint (0..1), speed, grounded, crouched, reloadFrac (-1 if none), drawFrac (0..1, 1 = holstered),
-   *      throwFrac (-1 if not throwing), cycleFrac (-1 if the bolt is not being worked), reloadSteps, mag (rounds loaded),
+   *      throwFrac (-1 if not throwing), knifeFrac (-1 if not knifing), cycleFrac (-1 if the bolt is not being worked), reloadSteps, mag (rounds loaded),
    *      lookDX, lookDY, dt, alive }
    */
   update (s) {
@@ -289,15 +300,17 @@ export class Viewmodel {
       }
     }
 
-    // draw / holster (the gun also drops out of the way while a grenade is thrown)
+    // draw / holster (the gun also drops out of the way while a grenade is thrown or the knife is out)
     const tf = s.throwFrac
-    const d = Math.max(s.drawFrac, tf >= 0 ? smooth(0, 0.3, tf) : 0)
+    const kf = s.knifeFrac
+    const d = Math.max(s.drawFrac, tf >= 0 ? smooth(0, 0.3, tf) : 0, kf >= 0 ? smooth(0, STRIKE, kf) * (1 - smooth(0.7, 1, kf)) : 0)
     pos.y -= d * d * 0.25
     rx -= d * 0.6
 
     m.root.position.copy(pos)
     m.root.rotation.set(rx, ry, rz)
     this.poseGrenade(tf)
+    this.poseKnife(kf)
 
     // shells
     for (const sh of this.shells) {
@@ -340,6 +353,25 @@ export class Viewmodel {
       root.rotation.set(0.35 - 0.8 * a, -0.2, -0.15)
       nade.visible = false
     }
+  }
+
+  poseKnife (kf) {
+    if (kf < 0) { if (this.knifeVM) this.knifeVM.root.visible = false; return }
+    if (!this.knifeVM) {
+      this.knifeVM = buildKnifeViewmodel(this.team, UNIFORM[this.team] || UNIFORM.allies)
+      this.knifeVM.root.traverse((o) => { o.frustumCulled = false })
+      this.holder.add(this.knifeVM.root)
+    }
+    const root = this.knifeVM.root
+    root.visible = true
+    let i = 0
+    while (i < KNIFE_KEYS.length - 2 && kf >= KNIFE_KEYS[i + 1][0]) i++
+    const [f0, p0, r0] = KNIFE_KEYS[i]
+    const [f1, p1, r1] = KNIFE_KEYS[i + 1]
+    const k = smooth(f0, f1, kf)
+    const mix = (a, b, j) => a[j] + (b[j] - a[j]) * k
+    root.position.set(mix(p0, p1, 0), mix(p0, p1, 1), mix(p0, p1, 2))
+    root.rotation.set(mix(r0, r1, 0), mix(r0, r1, 1), mix(r0, r1, 2))
   }
 
   render (renderer, fov) {

@@ -19,6 +19,8 @@ A browser-based, low-poly multiplayer team deathmatch shooter set on **Rudarska 
 - Strict faction rules: Axis soldiers only ever carry Axis weapons and Allied soldiers Allied ones, enforced by the server
 - Aim down sights, sprint, crouch, jump, and spawn protection
 - Every soldier, on either side, carries one Stielhandgranate 24 stick grenade per life. It bounces off the map, has a 3.5 s fuse, and bots throw theirs at enemies who duck behind cover
+- A knife on <kbd>V</kbd> (M3 trench knife or S84/98 bayonet): one stab kills at arm's length. Bots use it up close, and they move in for it while reloading
+- Every death, friendly or enemy, leaves an ammo can under the body for 30 s. Walk over it to refill your own weapons' reserve, up to what you spawned with
 - Health regenerates COD2-style after 5 s without taking damage
 - Server-side bots fill the match up to 8 players. They use A* pathfinding, line-of-sight targeting and human-like aim error
 - Killfeed, compass/minimap, hitmarkers, damage direction indicators
@@ -50,7 +52,7 @@ Handy URL params: `?name=Mateo` pre-fills the callsign, `?team=axis` picks a sid
 | <kbd>Space</kbd> | Jump | <kbd>C</kbd> / <kbd>Ctrl</kbd> | Crouch |
 | <kbd>R</kbd> | Reload | <kbd>1</kbd> / <kbd>2</kbd> / <kbd>Q</kbd> | Rifle / pistol / last weapon |
 | <kbd>Tab</kbd> | Scoreboard | <kbd>Esc</kbd> | Pause |
-| <kbd>B</kbd> | Loadout / switch side | | |
+| <kbd>V</kbd> | Knife | <kbd>B</kbd> | Loadout / switch side |
 
 ## How it works
 
@@ -64,6 +66,7 @@ tools/    Blender build scripts for the map and cars, texture/sky generators
 - **Networking.** [geckos.io](https://github.com/geckos-io/geckos.io) sends data over WebRTC data channels, so it behaves like UDP inside the browser. The server ticks at 30 Hz and sends snapshots at 20 Hz. Clients upload input at 30 Hz and interpolate remote players with a 110 ms buffer. HTTP and the WebRTC UDP mux share port **7344**, so one TCP+UDP firewall rule is enough.
 - **Physics.** [Rapier](https://rapier.rs/) runs the same kinematic character motor on both sides: the client for the local player, the server for bots. Movement collides identically everywhere.
 - **Grenades.** `shared/grenade.js` steps the flight (gravity, bounces off solid geometry) at a fixed 60 Hz. The server runs it to place the blast and deal damage: full damage within 2 m, nothing past 7.5 m, only to body parts it can see, never to teammates, but to the thrower. Clients replay the same throw so their visual follows the server's path until the `boom` message arrives.
+- **Knife and ammo cans.** The client picks who its stab reaches, and the server re-checks reach, angle and line of sight with some slack for latency (`knifeReach` in `shared/hitbox.js`). The server also places the ammo cans, gives each one to the first soldier over it who is short of ammunition, and removes them when they expire. Clients only draw them.
 - **Hits.** Players have a head sphere plus body and leg capsules, defined in `shared/hitbox.js`. The client claims a hit, and the server checks the shooter's position, the target's position and line of sight before applying damage.
 - **Map.** Colliders, spawns and car markers are stored as named nodes inside `parking_lot.glb`. Server and client both read them with `shared/mapdata.js`. The server bakes a 0.5 m walkability grid from the map at startup to give bots their pathfinding.
 - **Cars.** Parked cars are instanced from `cars.glb`. Each model costs three draw calls per LOD (paint, opaque, glass), however many copies are on the map.
