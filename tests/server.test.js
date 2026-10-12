@@ -212,6 +212,27 @@ test('team switch is refused when it would stack the humans', () => {
   a.disconnect(); b.disconnect()
 })
 
+test('any player can turn the bots off and on for the whole server', () => {
+  const a = connect('Kilo')
+  const b = connect('Lima')
+  const bots = () => [...game.players.values()].filter((p) => p.isBot).length
+  assert.ok(bots() > 0)
+  clock += 10000
+  a.send('bots', { on: false })
+  assert.equal(bots(), 0)
+  assert.equal(b.last('roster').match.bots, false)
+  assert.match(b.last('notice').m, /Kilo turned bots off/)
+  b.send('bots', { on: false })
+  assert.equal(b.last('notice').m.includes('Lima'), false, 'switching to the current state does nothing')
+  a.send('bots', { on: true })
+  assert.equal(bots(), 0, 'one player cannot flip it back and forth at once')
+  clock += MATCH.botToggleCooldown * 1000
+  a.send('bots', { on: true })
+  assert.equal(bots(), MATCH.targetPlayers - 2)
+  assert.equal(game.matchInfo().bots, true)
+  a.disconnect(); b.disconnect()
+})
+
 test('bots always carry valid weapons of their own faction', () => {
   const ch = connect('Juliet', { team: 'allies' })
   deploy(ch, { cls: 'assault', primary: 'thompson', secondary: 'm1911' })
