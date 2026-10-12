@@ -123,17 +123,31 @@ def define():
     M['hedge'] = mat('hedge_leaves', diff='gen/hedge.jpg', rough=0.9, tile=(1.2, 1.2))
     M['leaf_hedge'] = decal('leaf_hedge_cut', 'leaf_hedge.png', rough=0.85)
     M['spruce_core'] = mat('spruce_core_leaves', diff='gen/hedge.jpg', rough=0.95, tile=(1.6, 1.6), tint=(0.3, 0.36, 0.34))
+    M['shrub_core'] = mat('shrub_core_leaves', diff='gen/hedge.jpg', rough=0.95, tile=(1.6, 1.6), tint=(0.42, 0.52, 0.36))
+    M['bamboo_core'] = mat('bamboo_core_leaves', diff='gen/hedge.jpg', rough=0.95, tile=(1.2, 1.2), tint=(0.5, 0.66, 0.34))
+    M['leaf_bamboo'] = decal('leaf_bamboo_cut', 'leaf_bamboo.png', rough=0.8)
+    M['leaf_ivy'] = decal('leaf_ivy_cut', 'leaf_ivy.png', rough=0.8)
+    M['leaf_shrub'] = decal('leaf_shrub_cut', 'leaf_shrub.png', rough=0.8)
+    M['bamboo_culm'] = mat('bamboo_culm', rgb(132, 142, 70), 0.55)
+
+    # NE embankment: retaining walls, dry-stone wall, mesh fence
+    M['retwall'] = pbr('retwall_concrete', 'concrete', 3.0, tint=tint(152, 150, 142), gray=True, rough=0.95)
+    M['drystone'] = pbr('drystone_limestone', 'rock', 1.3, tint=tint(178, 172, 158), gray=True, rough=0.9, nstrength=1.3)
+    M['wall_crack'] = mat('wall_crack', rgb(66, 64, 58), 0.95)
+    M['wall_stains'] = decal('wall_stains_dec', 'wall_stains.png', rough=0.9)
+    M['fence_mesh'] = decal('fence_mesh_cut', 'fence_mesh.png', rough=0.5)
+    M['fence_green'] = mat('fence_green', rgb(44, 74, 52), 0.5, 0.4)
 
     # decals / signs
     for k, f in [('sports_text', 'sports_text.png'), ('handball', 'handball.png'), ('ck', 'ck_logo.png'),
                  ('graffiti', 'graffiti.png'), ('blob', 'blob.png'), ('grime', 'grime.png'),
                  ('manhole', 'manhole.png'), ('sign_fina', 'sign_fina.png'), ('sign_library', 'sign_library.png'),
-                 ('treeline', 'treeline.png')]:
+                 ('treeline', 'treeline.png'), ('sign_nostop', 'sign_nostop.png')]:
         M[k] = decal(f'{k}_dec' if k in ('graffiti', 'blob', 'grime') else f'{k}_cut', f, rough=0.8)
     for k, f in [('sign_p', 'sign_p.png'), ('sign_cross', 'sign_cross.png'), ('sign_ideal', 'sign_ideal.png'),
                  ('sign_rudarski', 'sign_rudarski.png'), ('sign_trio', 'sign_trio.png'), ('sign_5570', 'sign_5570.png'),
                  ('flag_hr', 'flag_hr.png'), ('flag_eu', 'flag_eu.png'), ('plate', 'plate.png'), ('plaque', 'plaque.png'),
-                 ('grate', 'grate.png')]:
+                 ('grate', 'grate.png'), ('sign_fire', 'sign_fire.png'), ('sign_board', 'sign_board.png')]:
         M[k] = decal(k, f, rough=0.5, alpha=False)
     M['flag_hr'].use_backface_culling = False
     M['flag_eu'].use_backface_culling = False

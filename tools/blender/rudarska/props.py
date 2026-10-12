@@ -3,7 +3,7 @@ shared group builders (lib.G) and, where it matters for gameplay, adds colliders
 import math
 
 import bmesh
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 from .lib import G, collider, collider_seg, rng, rot2, v3
 from .palette import M
@@ -407,33 +407,56 @@ def _fuzz(mb, p, n, s, m):
     _facing_card(mb, p + n * s * 0.22, nn, s, m, (n + Vector((0, 0, 0.4))).normalized(), twist=3.1)
 
 
-def bush(x, y, z, r=1.0, h=None, leaf=None, g='Foliage.bushes'):
-    """round shrub: a small dark leafy core inside a ball of foliage cards (outer ones facing out,
-    inner ones darker) so the edge is soft and leafy instead of a solid lump."""
+def bush(x, y, z, r=1.0, h=None, leaf=None, g='Foliage.bushes', collide=None):
+    """shrub: a small dark leafy core inside a slightly lopsided ball of foliage cards (outer ones facing out,
+    inner ones darker) so the edge is soft and leafy instead of a solid lump; the lowest cards reach the ground
+    so it sits in the grass instead of hovering.  Shrubs you can't see through are solid (bullets and bot sight
+    stop at them too); only the far, out-of-bounds ones skip the collider."""
     mb = G[g]
     h = h or r * 1.2
-    c = Vector((x, y, z + h * 0.48))
-    mb.blob(tuple(c - Vector((0, 0, h * 0.06))), 1.0, M['spruce_core'], scale=(r * 0.62, r * 0.62, h * 0.36), jitter=0.1, sub=2,
+    c = Vector((x, y, z + h * 0.5))
+    mb.blob(tuple(c - Vector((0, 0, h * 0.06))), 1.0, M['shrub_core'], scale=(r * 0.5, r * 0.5, h * 0.32), jitter=0.1, sub=2,
             smooth=True)
     m = leaf or M['leaf_hedge']
     inner = _inner(m)
     nrm = lambda co, cc=c: ((co - cc).normalized() + Vector((0, 0, 0.45))).normalized()
+    # lopsided: stretched along a random axis, the top pushed a little off-centre
+    a = rng.uniform(0, math.pi)
+    ax, ay = Vector((math.cos(a), math.sin(a), 0)), Vector((-math.sin(a), math.cos(a), 0))
+    kx, ky = rng.uniform(1.0, 1.18), rng.uniform(0.85, 1.0)
+    lean = Vector((rng.uniform(-0.12, 0.12) * r, rng.uniform(-0.12, 0.12) * r, 0))
     n = int(14 + r * r * 30)
     for i in range(n):
         d = _rand_unit()
-        if d.z < -0.35:
-            d.z = -0.35 - (d.z + 0.35) * 0.3
+        if d.z < -0.6:
+            d.z = -0.6 - (d.z + 0.6) * 0.3
         outer = i < n * 0.75
         rr = rng.uniform(0.62, 0.95) if outer else rng.uniform(0.2, 0.55)
-        p = c + Vector((d.x * r * rr, d.y * r * rr, d.z * h * 0.5 * rr))
         s = rng.uniform(0.7, 1.05) * max(0.75, r * 0.75)
+        lat = (ax * (d.dot(ax) * kx) + ay * (d.dot(ay) * ky)) * r * rr
+        p = c + lat + lean * (0.5 + d.z * 0.5) + Vector((0, 0, d.z * h * 0.5 * rr))
+        p.z = max(p.z, z + s * 0.3)
         if outer:
             _facing_card(mb, p, (p - c) + Vector((0, 0, 0.2)), s, m, nrm, twist=3.1)
         else:
             _facing_card(mb, p, _rand_unit(), s, inner, nrm, twist=3.1)
+    # skirt: a ring of cards low down so the foot is leafy right to the ground
+    for i in range(int(5 + r * 9)):
+        a = rng.uniform(0, math.tau)
+        d = ax * (math.cos(a) * kx) + ay * (math.sin(a) * ky)
+        s = rng.uniform(0.6, 0.9) * max(0.7, r * 0.7)
+        p = Vector((x, y, z)) + d * r * rng.uniform(0.6, 0.85) + lean * 0.3 + Vector((0, 0, s * 0.42 + rng.uniform(0.0, 0.12) * h))
+        _facing_card(mb, p, d + Vector((0, 0, 0.1)), s, m, nrm, twist=3.1)
+    if collide is None:
+        collide = g != 'Foliage.far'
+    if collide:
+        # two crossed squares (an 8-pointed footprint) hugging the foliage ball
+        s = 1.6 * r
+        for a in (0.0, math.pi / 4):
+            collider('bush', (x, y, z + h * 0.46 - 0.1), (s, s, h * 0.92 + 0.2), rz=a)
 
 
-def hedge(p0, p1, z, h=1.1, w=0.9, clip=True, g='Foliage.hedges', fuzz=True):
+def hedge(p0, p1, z, h=1.1, w=0.9, collide=True, g='Foliage.hedges', fuzz=True):
     """clipped hedge along p0->p1: a smooth loaf (rounded section, slightly wavy) with leaf cards on its skin."""
     mb = G[g]
     a, b = Vector((p0[0], p0[1], 0)), Vector((p1[0], p1[1], 0))
@@ -486,8 +509,8 @@ def hedge(p0, p1, z, h=1.1, w=0.9, clip=True, g='Foliage.hedges', fuzz=True):
             p = a + d * s + nside * u + Vector((0, 0, z + v))
             n3 = (nside * nn2.x + Vector((0, 0, nn2.y))).normalized()
             _fuzz(mb, p, n3, rng.uniform(0.45, 0.7), m)
-    if clip:
-        collider_seg('hedge', p0, p1, w, z, z + h, clip=True)
+    if collide:
+        collider_seg('hedge', p0, p1, w * 0.92, z - 0.1, z + h)
 
 
 def x_phase(p):
@@ -513,6 +536,128 @@ def rock(x, y, z, r=0.8, squash=0.7, g='Props.rocks', collide=False):
             rz=rng.uniform(0, math.tau))
     if collide:
         collider('rock', (x, y, z + r * squash * 0.4), (r * 1.4, r * 1.2, r * squash * 1.4))
+
+
+def rock_block(x, y, z0, sx, sy, sz, rz=0.0, g='Props.rocks', m=None, cuts=2, jit=0.09, collide=True):
+    """blocky limestone: a subdivided box with jittered vertices, flat shaded (bedded, fissured outcrop
+    blocks and the dry-stone wall's stones).  z0 = foot of the block."""
+    mb = G[g]
+    mtx = Matrix.Translation((x, y, z0 + sz / 2)) @ Matrix.Rotation(rz, 4, 'Z') @ Matrix.Diagonal((sx, sy, sz, 1))
+    res = bmesh.ops.create_cube(mb.bm, size=1.0, matrix=mtx)
+    verts = set(res['verts'])
+    if cuts:
+        edges = list({e for v in verts for e in v.link_edges})
+        sub = bmesh.ops.subdivide_edges(mb.bm, edges=edges, cuts=cuts, use_grid_fill=True)
+        faces = {f for f in sub['geom'] if isinstance(f, bmesh.types.BMFace) and f.is_valid}
+        faces |= {f for v in verts if v.is_valid for f in v.link_faces}
+        verts = {v for f in faces for v in f.verts}
+    j = min(sx, sy, sz) * jit
+    c = Vector((x, y, z0 + sz / 2))
+    for v in verts:
+        v.co += Vector((rng.uniform(-j, j), rng.uniform(-j, j), rng.uniform(-j, j) * 0.6))
+        # knock the top edges back a little (weathered arrises)
+        if v.co.z > z0 + sz * 0.8:
+            d = Vector((v.co.x - c.x, v.co.y - c.y, 0))
+            v.co -= d * rng.uniform(0.0, 0.12)
+    mb._tag(mb._faces_of(verts), m or M['rock'], False)
+    if collide:
+        collider('rock', (x, y, z0 + sz / 2), (sx * 0.92, sy * 0.92, sz * 0.96), rz=rz)
+
+
+def bamboo(x0, x1, y0, y1, zf, h=6.0, density=4.5, g='Foliage.bamboo', collide=True):
+    """bamboo thicket over the rectangle x0..x1 / y0..y1 (zf(x, y) = ground height): thin leaning culms
+    with leaf sprays on their upper two thirds, a skin of outward-facing leaf cards and a dark core so it
+    reads as the dense wall it is in the photos.  Solid (blocks bullets and sight)."""
+    mb = G[g]
+    leaf = M['leaf_bamboo']
+    inner = _inner(leaf)
+    culm = M['bamboo_culm']
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    hx, hy = (x1 - x0) / 2, (y1 - y0) / 2
+    zs = [zf(x, y) for x in (x0, cx, x1) for y in (y0, cy, y1)]
+    zmin, zmax = min(zs), max(zs)
+    for i in range(int(4 * hx * hy * density)):
+        x, y = rng.uniform(x0, x1), rng.uniform(y0, y1)
+        z = zf(x, y)
+        hh = h * rng.uniform(0.72, 1.06)
+        # culms fan outwards (more at the edges of the clump) and arch over at the top
+        lx = (x - cx) / max(hx, 0.1) * 0.9 + rng.uniform(-0.35, 0.35)
+        ly = (y - cy) / max(hy, 0.1) * 0.9 + rng.uniform(-0.35, 0.35)
+        lean = Vector((lx, ly, 0)) * hh * 0.14
+        pts = [Vector((x, y, z - 0.1))] + [Vector((x, y, z)) + lean * (t ** 1.6) + Vector((0, 0, hh * t)) for t in (0.35, 0.7, 1.0)]
+        mb.tube([tuple(p) for p in pts], rng.uniform(0.016, 0.03), culm, seg=5, caps=False)
+        out = Vector((lx, ly, 0))
+        out = out.normalized() if out.length > 0.2 else _rand_unit()
+        nrm = (out + Vector((0, 0, 0.5))).normalized()
+        for k in range(rng.randint(2, 4)):
+            t = rng.uniform(0.15, 1.0) ** 0.8
+            p = Vector((x, y, z)) + lean * (t ** 1.6) + Vector((0, 0, hh * t))
+            _facing_card(mb, p + out * 0.25, out + _rand_unit() * 0.7 + Vector((0, 0, 0.15)), rng.uniform(1.1, 1.8), leaf, nrm,
+                         twist=0.7)
+    # outer skin: cards on the sides and top of the (slightly bulging) clump volume
+    for i in range(int((hx + hy) * 2 * h * 4.5 + hx * hy * 6)):
+        side = rng.random()
+        if side < 0.85:
+            a = rng.uniform(0, math.tau)
+            d = Vector((math.cos(a), math.sin(a), 0))
+            k = min(hx / max(abs(d.x), 1e-3), hy / max(abs(d.y), 1e-3))
+            t = rng.uniform(0.0, 1.0) ** 1.15
+            bulge = 1.0 + 0.35 * math.sin(t * math.pi)
+            p = Vector((cx, cy, 0)) + d * k * rng.uniform(0.85, 1.05) * bulge
+            p.z = zf(min(max(p.x, x0), x1), min(max(p.y, y0), y1)) + max(h * t, 0.45)
+            n = d + Vector((0, 0, 0.25))
+        else:
+            p = Vector((rng.uniform(x0, x1), rng.uniform(y0, y1), 0))
+            p.z = zf(p.x, p.y) + h * rng.uniform(0.85, 1.02)
+            n = Vector((p.x - cx, p.y - cy, 1.2))
+        nrm = (n.normalized() + Vector((0, 0, 0.4))).normalized()
+        _facing_card(mb, p, n, rng.uniform(1.2, 2.0), leaf if rng.random() < 0.8 else inner, nrm, twist=0.8)
+    # dark core (well inside the skin) keeps it from being see-through between the cards
+    mb.blob((cx, cy, zmin + h * 0.42), 1.0, M['bamboo_core'], scale=(max(0.15, hx - 0.5), max(0.15, hy - 0.5), h * 0.4), jitter=0.12,
+            sub=2, smooth=True)
+    if collide:
+        collider('bamboo', (cx, cy, (zmin - 0.3 + zmax + h * 0.88) / 2),
+                 (2 * hx - 0.25, 2 * hy - 0.25, zmax + h * 0.88 - zmin + 0.3))
+
+
+def ivy_wall(p0, p1, z0, z1, n, off=0.03, g='Foliage.ivy', m=None):
+    """ivy / creeper leaf cards stuck on a vertical face from p0 to p1 (outward = right of p0->p1).
+    z0, z1: numbers or callables of the 0..1 position along the face."""
+    mb = G[g]
+    m = m or M['leaf_ivy']
+    a, b = Vector((p0[0], p0[1], 0)), Vector((p1[0], p1[1], 0))
+    d = (b - a).normalized()
+    nn = Vector((d.y, -d.x, 0))
+    nrm = (nn + Vector((0, 0, 0.6))).normalized()
+    for i in range(n):
+        t = rng.random()
+        lo = z0(t) if callable(z0) else z0
+        hi = z1(t) if callable(z1) else z1
+        p = a + (b - a) * t + nn * (off + rng.uniform(0.0, 0.07)) + Vector((0, 0, rng.uniform(lo, hi)))
+        _facing_card(mb, p, nn + _rand_unit() * 0.35, rng.uniform(0.4, 0.75), m, nrm, twist=3.1)
+
+
+def drape(p0, p1, ztop, n, drop=(0.5, 1.3), off=0.06, g='Foliage.ivy', m=None):
+    """creeper / shrub branches hanging over the top edge of a wall face from p0 to p1 (outward = right of
+    p0->p1): tall leaf cards whose tops sit on the edge, longer and denser in clumps.  ztop: number or callable of
+    the 0..1 position along the face."""
+    mb = G[g]
+    m = m or M['leaf_ivy']
+    a, b = Vector((p0[0], p0[1], 0)), Vector((p1[0], p1[1], 0))
+    d = (b - a).normalized()
+    nn = Vector((d.y, -d.x, 0))
+    nrm = (nn + Vector((0, 0, 0.8))).normalized()
+    ph = rng.uniform(0, math.tau)
+    L = (b - a).length
+    for i in range(n):
+        t = rng.random()
+        clump = 0.5 + 0.5 * math.sin(t * L * 1.3 + ph) * math.sin(t * L * 0.47 + ph * 2)
+        hh = rng.uniform(*drop) * (0.55 + 0.6 * clump)
+        w = rng.uniform(0.45, 0.8)
+        zt = ztop(t) if callable(ztop) else ztop
+        p = a + (b - a) * t + nn * (off + rng.uniform(0.0, 0.08) + 0.06 * clump) + Vector((0, 0, zt + 0.12 - hh / 2))
+        up = (Vector((0, 0, 1)) + d * rng.uniform(-0.15, 0.15) - nn * 0.08).normalized()
+        mb.card(p, d, up, w, hh, m, normal=nrm)
 
 
 # ------------------------------------------------------------------------------------------------

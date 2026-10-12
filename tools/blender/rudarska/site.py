@@ -5,13 +5,14 @@ import math
 from mathutils import Vector
 
 from . import buildings as B
+from . import ne_bank as NE
 from . import props as P
-from .lib import G, collider, collider_mm, collider_ramp, collider_seg, marker, pbr, rng
+from .lib import G, collider, collider_mm, collider_seg, marker, pbr, rng
 from .palette import M
 
 GG = 'Ground.paving'
 Z_WALK = 0.12          # sidewalks / lot / plaza level
-Z_PARK = 2.8           # park above the rock embankment
+Z_PARK = 2.8           # park above the NE bank
 Z_PLATEAU = 4.4        # ground behind the SE retaining wall
 
 # street geometry: straight along X, quarter turn into the lower road (x 62.9..69.9) at the SE end
@@ -207,7 +208,9 @@ def lot_and_cars():
             x = STALL_X0 + k * STALL_W
             if y0 > 15 and -3.6 < x < 10.6:
                 continue
-            paint_rect(pm, x - 0.05, x + 0.05, y0 + (0.25 if y0 < 4 else 0.0), y1 - (0.4 if y0 > 15 else 0.0), z)
+            yellow = y0 > 15 and -10.6 < x < -3.4
+            paint_rect(pm, x - 0.05, x + 0.05, y0 + (0.25 if y0 < 4 else 0.0), y1 - (0.4 if y0 > 15 else 0.0), z,
+                       M['paint_y'] if yellow else None)
             if k == nst:
                 break
             cx = x + STALL_W / 2
@@ -307,7 +310,7 @@ def street_furniture():
 
 
 # ------------------------------------------------------------------------------------------------
-# NE: plaza details, embankment, park, stairs, NW slope
+# NE: plaza details, NE bank (ne_bank.py), park
 # ------------------------------------------------------------------------------------------------
 
 def plaza():
@@ -318,7 +321,7 @@ def plaza():
     mb.box_mm(x0, x1, y0, y1, zw - 0.05, zw + 0.7, M['concrete'])
     G['Ground.planter'].poly_flat(B.rect(x0 + 0.25, x1 - 0.25, y0 + 0.25, y1 - 0.25), zw + 0.72, M['soil'])
     collider_mm('planter', x0, x1, y0, y1, -1, zw + 0.7)
-    P.hedge((x0 + 0.7, y1 - 0.75), (x1 - 0.7, y1 - 0.75), zw + 0.7, h=0.9, w=1.0, clip=False)
+    P.hedge((x0 + 0.7, y1 - 0.75), (x1 - 0.7, y1 - 0.75), zw + 0.7, h=0.9, w=1.0)
     for x in (-54.0, -51.0, -47.5, -45.5):
         P.bush(x, 9.6 + rng.uniform(-0.3, 0.3), zw + 0.7, r=0.9, h=1.0)
     P.tree_broad(-50.5, 10.4, zw + 0.7, h=6.5, crown=2.8, leaf=M['leaf_yellow'], trunk_h=2.2, collide=True)
@@ -330,7 +333,7 @@ def plaza():
     for (x, y) in ((-63.0, 11.0), (-60.4, 11.2), (-63.2, 14.0), (-60.6, 14.2), (-58.2, 12.6), (-65.6, 12.4)):
         collider('table', (x, y, zw + 0.45), (1.6, 1.6, 0.9), clip=True)
     # hedge along the school lawn edge and cedars on the lawn
-    P.hedge((-165, 5.9), (-77.6, 5.9), 0.16, h=0.9, w=0.8, clip=False, fuzz=False)
+    P.hedge((-165, 5.9), (-77.6, 5.9), 0.16, h=0.9, w=0.8, collide=False, fuzz=False)
     P.tree_cedar(-84.0, 11.5, 0.16, h=16.0, r=6.0, collide=False)
     P.tree_cedar(-97.0, 12.5, 0.16, h=18.0, r=7.0, collide=False)
     P.tree_cedar(-113.0, 11.0, 0.16, h=15.0, r=6.0, collide=False)
@@ -342,89 +345,47 @@ def plaza():
 
 
 def embankment_and_park():
-    mb = G['Props.site']
-    # park ground (grass) with the rock face along the lot edge
-    park = [(-43.0, 24.0), (-34.0, 24.0), (-34.0, 23.5), (2.3, 23.5), (2.3, 29.0), (4.7, 29.0), (4.7, 23.5), (60.0, 23.5),
+    # NE lot edge (walls, outcrop, stair, bank, driveway) after the Street View shots
+    NE.build()
+    # park ground above the bank (its front is the top of the bank; notch for the central stair flight)
+    yt = NE.Y_TOP
+    park = [(-43.0, 34.4), (-38.0, 34.4), (-38.0, yt), (2.0, yt), (2.0, 29.0), (5.0, 29.0), (5.0, yt), (NE.wall_x(yt), yt),
             (57.5, 45.0), (57.5, 88.0), (-43.0, 88.0)]
-    G['Ground.park'].poly_prism(park, -0.3, Z_PARK, M['grass'], side=M['rock'])
-    collider_mm('park', -43.0, 2.3, 23.5, 88.0, -1, Z_PARK)
-    collider_mm('park', 4.7, 59.0, 23.5, 88.0, -1, Z_PARK)
-    collider_mm('park', 2.3, 4.7, 29.0, 88.0, -1, Z_PARK)
-    # limestone outcrop along the face
-    x = -33.6
-    while x < 59.5:
-        if -3.2 < x < 10.2:
-            x = 10.2
-        r = rng.uniform(0.6, 1.1)
-        for zc in (0.35, 1.2, 2.0):
-            if rng.random() < 0.82:
-                P.rock(x + rng.uniform(-0.4, 0.4), 23.75 + rng.uniform(0.0, 0.2), zc - r * 0.35, r=r * rng.uniform(0.8, 1.1),
-                       squash=rng.uniform(0.55, 0.85))
-        x += r * 1.2
-    # hedge along the top with gaps to drop down
-    for x0, x1 in ((-33.4, -20.0), (-18.4, 1.0), (6.0, 20.0), (21.6, 40.0), (41.6, 57.6)):
-        P.hedge((x0, 24.25), (x1, 24.25), Z_PARK, h=1.05, w=0.8)
+    G['Ground.park'].poly_prism(park, -0.3, Z_PARK, M['grass'], side=M['soil'])
+    collider_mm('park', -43.0, -38.0, NE.DRIVE_TOP, 88.0, -1, Z_PARK)
+    collider_mm('park', -38.0, 2.0, yt, 88.0, -1, Z_PARK)
+    collider_mm('park', 5.0, 59.0, yt, 88.0, -1, Z_PARK)
+    collider_mm('park', 2.0, 5.0, 29.0, 88.0, -1, Z_PARK)
     # footpaths
     pm = G['Ground.paths']
     # light paving L along the Erste side (very visible on the aerial)
-    pm.quad([(-6.0, 24.6, Z_PARK + 0.012), (-3.8, 24.6, Z_PARK + 0.012), (-3.8, 37.5, Z_PARK + 0.012), (-6.0, 37.5, Z_PARK + 0.012)],
+    pm.quad([(-6.0, yt + 0.1, Z_PARK + 0.012), (-3.8, yt + 0.1, Z_PARK + 0.012), (-3.8, 37.5, Z_PARK + 0.012), (-6.0, 37.5, Z_PARK + 0.012)],
             M['slabs'])
     pm.quad([(-6.0, 37.5, Z_PARK + 0.012), (15.0, 37.5, Z_PARK + 0.012), (15.0, 40.0, Z_PARK + 0.012), (-6.0, 40.0, Z_PARK + 0.012)],
             M['slabs'])
     for a, b, w in (((3.5, 28.8), (12.5, 36.2), 2.2), ((12.5, 36.2), (22.8, 43.5), 2.2), ((3.5, 28.8), (-36.0, 28.4), 2.0),
-                    ((-36.0, 28.4), (-40.5, 25.0), 2.0), ((3.5, 28.8), (40.0, 29.8), 2.0), ((40.0, 29.8), (56.0, 30.5), 2.0)):
+                    ((-36.0, 28.4), (-39.8, 32.8), 2.0), ((3.5, 28.8), (40.0, 29.8), 2.0), ((40.0, 29.8), (56.0, 30.5), 2.0)):
         pm.quad(seg_quad(a, b, w, Z_PARK + 0.012), M['pavers'])
     # benches, bins
     for (x, y) in ((-26.0, 29.9), (-9.0, 29.8), (16.0, 30.6), (30.0, 30.9)):
         P.bench(x, y, Z_PARK, 0.0)
         collider('bench', (x, y + 0.05, Z_PARK + 0.4), (1.9, 0.7, 0.8), clip=True)
     P.litter_bin(-1.0, 29.9, Z_PARK)
-    # trees: tall spruces cluster + deciduous
+    # trees: tall spruces cluster + deciduous (the front ones stand on the bank)
     for (x, y, h) in ((23.5, 27.6, 20.0), (29.6, 31.3, 23.0), (34.8, 26.8, 18.0), (38.6, 32.4, 19.5), (27.0, 25.4, 15.0),
                       (45.0, 33.2, 17.0)):
-        P.tree_conifer(x, y, Z_PARK, h=h, rbase=h * 0.17)
+        P.tree_conifer(x, y, NE.bank_z(x, y), h=h, rbase=h * 0.17)
     for (x, y, h, cr) in ((-30.0, 31.6, 11.0, 4.0), (-21.0, 26.4, 12.0, 4.2), (-12.0, 31.8, 10.5, 3.8), (-3.0, 26.6, 12.0, 4.5),
-                          (10.0, 31.6, 11.5, 4.2), (16.5, 26.4, 10.0, 3.6), (49.0, 27.0, 15.0, 6.2), (53.5, 32.4, 15.0, 5.6),
-                          (-39.5, 32.5, 10.0, 3.6), (41.5, 26.0, 15.0, 6.5), (56.0, 25.5, 14.0, 5.5), (12.0, 26.0, 12.0, 4.6)):
-        P.tree_broad(x, y, Z_PARK, h=h, crown=cr)
+                          (10.0, 31.6, 11.5, 4.2), (49.0, 27.0, 15.0, 6.2), (53.5, 32.4, 15.0, 5.6),
+                          (-39.5, 36.5, 10.0, 3.6), (41.5, 26.0, 15.0, 6.5), (56.0, 25.5, 14.0, 5.5), (12.0, 26.0, 12.0, 4.6)):
+        P.tree_broad(x, y, NE.bank_z(x, y), h=h, crown=cr)
     for (x, y, h, cr) in ((-38.0, 41.0, 12.0, 4.5), (-10.0, 40.0, 13.0, 4.8), (-4.0, 52.0, 12.0, 4.5), (-37.0, 54.0, 13.0, 5.0),
                           (50.0, 40.0, 14.0, 5.0), (52.0, 56.0, 13.0, 4.6), (28.0, 60.0, 14.0, 5.0), (-40.0, 70.0, 12.0, 4.5),
                           (0.0, 72.0, 13.0, 5.0), (40.0, 72.0, 12.0, 4.4), (-12.0, 82.0, 14.0, 5.0)):
         P.tree_broad(x, y, Z_PARK, h=h, crown=cr, collide=False, g='Foliage.far')
     for (x, y, h) in ((-22.0, 46.0, 19.0), (-15.0, 50.0, 17.0), (35.0, 58.0, 21.0), (44.0, 63.0, 18.0)):
         P.tree_conifer(x, y, Z_PARK, h=h, rbase=h * 0.17, collide=False, g='Foliage.far')
-    P.grass_tufts(-42, 57, 24.8, 34.0, Z_PARK, 260)
-
-    # double-branch stair: side flights to a landing at 1.4 m, central flight up to the park
-    st = G['Props.site']
-    zw = Z_WALK
-    st.box_mm(1.5, 5.5, 21.8, 25.0, -0.1, 1.4, M['concrete'])
-    collider_mm('stairs', 1.5, 5.5, 21.8, 25.0, -1, 1.4)
-    for p0, d in (((-2.5, 22.6), (1, 0)), ((9.5, 22.6), (-1, 0))):
-        st.stairs(p0, d, 1.6, 8, (1.4 - zw) / 8, 0.5, zw, M['concrete'])
-        for i in range(8):
-            ztop = zw + (1.4 - zw) / 8 * (i + 1)
-            cx = p0[0] + d[0] * (0.5 * i + 0.25)
-            collider('stairs', (cx, p0[1], (ztop - 1.0) / 2), (0.5, 1.6, ztop + 1.0))
-    st.stairs((3.5, 25.0), (0, 1), 2.4, 9, (Z_PARK - 1.4) / 9, 4.0 / 9, 1.4, M['concrete'])
-    for i in range(9):
-        ztop = 1.4 + (Z_PARK - 1.4) / 9 * (i + 1)
-        cy = 25.0 + 4.0 / 9 * (i + 0.5)
-        collider('stairs', (3.5, cy, (ztop - 1.0) / 2), (2.4, 4.0 / 9, ztop + 1.0))
-    # cheek walls of the central flight
-    for x in (2.15, 4.85):
-        st.box_mm(x - 0.15, x + 0.15, 23.5, 29.0, 1.4, Z_PARK + 0.15, M['concrete'])
-    P.railing([(-2.5, 21.85, zw), (1.5, 21.85, 1.4), (5.5, 21.85, 1.4), (9.5, 21.85, zw)], 0, h=0.95, rails=2)
-    for x in (2.15, 4.85):
-        P.railing([(x, 25.0, 1.4 + 0.15), (x, 29.0, Z_PARK + 0.15)], 0, h=0.9, rails=1)
-    # NW grass slope from the plaza / lot corner up to the park
-    sl = G['Ground.park']
-    sl.quad([(-43.0, 18.5, Z_WALK), (-34.0, 18.5, Z_WALK), (-34.0, 24.0, Z_PARK), (-43.0, 24.0, Z_PARK)], M['grass'])
-    sl.quad([(-34.0, 18.5, Z_WALK), (-34.0, 24.0, Z_WALK), (-34.0, 24.0, Z_PARK)], M['rock'])
-    collider_ramp('slope', (-38.5, 18.5), (-38.5, 24.0), 9.0, Z_WALK, Z_PARK, thick=3.0)
-    for k in range(5):
-        P.rock(-34.2, 19.5 + k * 1.0, Z_WALK, r=0.6 + rng.random() * 0.3, squash=0.6)
-    P.grass_tufts(-42.5, -34.5, 19.0, 23.8, lambda x, y: Z_WALK + (y - 18.5) / 5.5 * (Z_PARK - Z_WALK), 40)
+    P.grass_tufts(-42, 57, yt + 0.2, 34.0, Z_PARK, 200)
 
 
 # ------------------------------------------------------------------------------------------------
@@ -436,8 +397,7 @@ def retaining_wall():
     pts = WALL_PATH
     for a, b in zip(pts, pts[1:]):
         top = Z_PLATEAU + 0.3
-        base = Z_PARK - 0.2 if (a[1] > 23.4 and b[1] > 23.4) else -0.3
-        mb.seg_box(a, b, 0.8, base, top, M['oldstone'], ext=0.4)
+        mb.seg_box(a, b, 0.8, -0.3, top, M['oldstone'], ext=0.4)
         mb.seg_box(a, b, 0.9, top, top + 0.12, M['concrete'], ext=0.45)
         collider_seg('rwall', a, b, 0.8, -1.0, top + 0.12, ext=0.4)
         collider_seg('bound', a, b, 0.9, top, 30.0, ext=0.4, clip=True)

@@ -617,10 +617,135 @@ def make_foliage():
     hedge_tex('hedge.jpg', (58, 90, 38), 31)
 
 
+def mesh_fence(name, size=512):
+    """welded-mesh panel fence (dark green), 1 m x 1 m per repeat: verticals every 50 mm, horizontals every
+    200 mm, plus the stiffening V-fold every 0.5 m (drawn as a doubled wire)."""
+    im = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    col = (46, 78, 54, 255)
+    hi = (70, 104, 76, 255)
+    for k in range(20):
+        x = (k + 0.5) * size / 20
+        d.line((x, 0, x, size), fill=col, width=3)
+        d.line((x - 1, 0, x - 1, size), fill=hi, width=1)
+    for k in range(5):
+        y = (k + 0.5) * size / 5
+        d.line((0, y, size, y), fill=col, width=4)
+        d.line((0, y - 1.5, size, y - 1.5), fill=hi, width=1)
+    for y in (size * 0.25, size * 0.75):
+        d.line((0, y - 4, size, y - 4), fill=col, width=3)
+        d.line((0, y + 4, size, y + 4), fill=col, width=3)
+    save(bleed(im), name)
+
+
+def wall_stains(name, seed, w=1024, h=256):
+    """tileable (in u) weathering overlay for old concrete retaining walls: dark rain streaks running down from
+    the top, a damp mossy band at the foot, blotches of algae.  RGBA, alpha-blended (_dec)."""
+    rng = np.random.default_rng(seed)
+    y = np.linspace(0, 1, h)[:, None]          # 0 = top
+    x = np.arange(w)[None, :]
+    a = np.zeros((h, w), np.float32)
+    rgb = np.zeros((h, w, 3), np.float32)
+    rgb[...] = (34, 32, 26)
+    # rain streaks: random columns, fading downwards with a ragged end
+    for _ in range(90):
+        cx = rng.uniform(0, w)
+        wd = rng.uniform(2, 14)
+        L = rng.uniform(0.25, 0.95)
+        s = rng.uniform(0.06, 0.28)
+        dx = np.minimum(np.abs(x - cx), w - np.abs(x - cx))
+        col = np.exp(-(dx / wd) ** 2) * s
+        a += col * np.clip(1 - y / L, 0, 1) ** 1.3
+    a = np.minimum(a, 0.45)
+    # mossy / damp foot
+    foot = np.clip((y - 0.62) / 0.38, 0, 1) ** 1.6
+    noise = np.zeros((h, w), np.float32)
+    for f, amp in ((6, 0.5), (17, 0.3), (41, 0.2)):
+        ph = rng.uniform(0, math.tau, 4)
+        noise += amp * (np.sin(x / w * math.tau * f + ph[0]) * np.cos(y * f * 2.3 + ph[1]) +
+                        np.sin(x / w * math.tau * (f + 3) + ph[2] + y * 4) * 0.5)
+    moss = np.clip(foot * (0.7 + 0.5 * noise), 0, 1)
+    rgb = rgb * (1 - moss[..., None]) + np.array([48, 62, 30], np.float32) * moss[..., None]
+    a = np.clip(a + moss * 0.75, 0, 0.85)
+    # algae blotches
+    for _ in range(26):
+        cx, cy, r = rng.uniform(0, w), rng.uniform(0.1, 0.9) * h, rng.uniform(8, 40)
+        dx = np.minimum(np.abs(x - cx), w - np.abs(x - cx))
+        dd = np.sqrt(dx ** 2 + (y * h - cy) ** 2)
+        b = np.clip(1 - dd / r, 0, 1) ** 1.5 * rng.uniform(0.2, 0.45)
+        rgb = rgb * (1 - b[..., None]) + np.array([52, 58, 34], np.float32) * b[..., None]
+        a = np.maximum(a, b)
+    out = np.concatenate([np.clip(rgb, 0, 255), (a * 255)[..., None]], axis=2).astype(np.uint8)
+    save(Image.fromarray(out, 'RGBA'), name)
+
+
+def make_ne_signs():
+    # no-stopping sign (blue disc, red ring and cross) - round, alpha-cut
+    S = 256
+    im = Image.new('RGBA', (S, S), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.ellipse((4, 4, S - 5, S - 5), fill=(196, 30, 34, 255))
+    d.ellipse((34, 34, S - 35, S - 35), fill=(24, 74, 170, 255))
+    c = S / 2
+    r = (S - 70) / 2
+    for sgn in (1, -1):
+        d.line((c - r * 0.72, c - sgn * r * 0.72, c + r * 0.72, c + sgn * r * 0.72), fill=(196, 30, 34, 255), width=30)
+    save(bleed(im), 'sign_nostop.png')
+    # red "fire brigade access" plate
+    im = Image.new('RGBA', (512, 256), (190, 34, 30, 255))
+    d = ImageDraw.Draw(im)
+    d.rectangle((6, 6, 505, 249), outline=(250, 250, 250, 255), width=6)
+    f = font('Arial Bold.ttf', 74)
+    for i, t in enumerate(('VATROGASNI', 'PRISTUP')):
+        bb = d.textbbox((0, 0), t, font=f)
+        d.text(((512 - bb[2] - bb[0]) / 2, 34 + i * 100 - bb[1]), t, font=f, fill=(250, 250, 250, 255))
+    save(im, 'sign_fire.png')
+    # project info board in front of the sports hall (white, blue logo strip, EU flag and a yellow notice)
+    W, H = 1024, 640
+    im = Image.new('RGBA', (W, H), (238, 238, 234, 255))
+    d = ImageDraw.Draw(im)
+    rng = random.Random(9)
+    d.rectangle((0, 0, W - 1, H - 1), outline=(150, 150, 150, 255), width=6)
+    d.rectangle((W - 120, 30, W - 70, H - 30), fill=(26, 58, 140, 255))
+    fb = font('Arial Bold.ttf', 34)
+    fs = font('Arial.ttf', 20)
+    d.text((60, 50), 'ULAGANJE U SPORTSKU INFRASTRUKTURU', font=fb, fill=(40, 52, 84, 255))
+    d.text((60, 100), 'SPORTSKI CENTAR - DOGRADNJA I ENERGETSKA OBNOVA', font=fs, fill=(70, 76, 90, 255))
+    for row in range(2):
+        for k in range(5):
+            x0, y0 = 60 + k * 168, 170 + row * 150
+            d.rectangle((x0, y0, x0 + 120, y0 + 46), fill=(rng.randint(150, 210),) * 3 + (255,))
+            for j in range(3):
+                d.line((x0, y0 + 64 + j * 18, x0 + rng.randint(80, 140), y0 + 64 + j * 18), fill=(120, 124, 130, 255), width=6)
+    d.rectangle((560, 480, 680, 560), fill=(232, 190, 30, 255))
+    d.rectangle((700, 480, 820, 560), fill=(0, 51, 153, 255))
+    for k in range(12):
+        a = k / 12 * math.tau
+        x, y = 760 + math.cos(a) * 26, 520 + math.sin(a) * 26
+        d.ellipse((x - 4, y - 4, x + 4, y + 4), fill=(255, 204, 0, 255))
+    for j in range(4):
+        d.line((60, 480 + j * 24, 60 + rng.randint(300, 440), 480 + j * 24), fill=(120, 124, 130, 255), width=8)
+    save(im, 'sign_board.png')
+
+
+def make_ne():
+    """textures for the NE embankment (bamboo, ivy, mesh fence, wall weathering, driveway signs)."""
+    leaf_card('leaf_bamboo.png', (104, 134, 50), 16, n_leaves=2600, leaf=(64, 7), clumps=9, spread=0.46, twig=(128, 136, 70),
+              back=(0.55, 1.0))
+    leaf_card('leaf_ivy.png', (44, 70, 32), 17, n_leaves=1700, leaf=(26, 21), clumps=8, twigs=False, back=(0.5, 0.95))
+    leaf_card('leaf_shrub.png', (62, 92, 42), 18, n_leaves=1500, leaf=(42, 20), clumps=7)
+    mesh_fence('fence_mesh.png')
+    wall_stains('wall_stains.png', 19)
+    make_ne_signs()
+
+
 if __name__ == '__main__':
     import sys
     if sys.argv[1:] == ['foliage']:
         make_foliage()
+        raise SystemExit
+    if sys.argv[1:] == ['ne']:
+        make_ne()
         raise SystemExit
     make_pbr()
     make_foliage()
@@ -629,4 +754,5 @@ if __name__ == '__main__':
     make_flags()
     make_graffiti()
     make_misc()
+    make_ne()
     print('textures ok')
