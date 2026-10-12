@@ -28,6 +28,7 @@ export class WeaponSystem {
     this.cooldown = 0
     this.bloom = 0
     this.punch = { pitch: 0, yaw: 0 }
+    this.kick = { pitch: 0, yaw: 0, bloom: 0 }
     this.adsT = 0
     this.sprintT = 0
     this.grenades = GRENADE.count
@@ -67,6 +68,7 @@ export class WeaponSystem {
     this.drawT = this.def.drawTime
     this.cooldown = Math.max(this.cooldown, 0)
     this.bloom = 0
+    this.kick = { pitch: 0, yaw: 0, bloom: 0 }
     this.events.push('switch')
   }
 
@@ -182,6 +184,11 @@ export class WeaponSystem {
     const rk = Math.exp(-w.recoil.recover * dt)
     this.punch.pitch *= rk
     this.punch.yaw *= rk
+    // a shot's own kick lands the frame after it, so the round leaves along the aim the player saw
+    this.bloom = Math.min(w.spread.bloomMax, this.bloom + this.kick.bloom)
+    this.punch.pitch += this.kick.pitch
+    this.punch.yaw += this.kick.yaw
+    this.kick = { pitch: 0, yaw: 0, bloom: 0 }
 
     let shots = 0
     const wants = w.auto ? ctl.trigger : ctl.triggerPressed
@@ -208,10 +215,10 @@ export class WeaponSystem {
       shots++
       this.cooldown += interval
       this.triggerHeld = true
-      this.bloom = Math.min(w.spread.bloomMax, this.bloom + w.spread.bloom * (1 - 0.5 * this.adsT))
+      this.kick.bloom += w.spread.bloom * (1 - 0.5 * this.adsT)
       const kick = 1 - 0.35 * this.adsT
-      this.punch.pitch += w.recoil.pitch * kick * (0.85 + Math.random() * 0.3)
-      this.punch.yaw += w.recoil.yaw * kick * (Math.random() * 2 - 1)
+      this.kick.pitch += w.recoil.pitch * kick * (0.85 + Math.random() * 0.3)
+      this.kick.yaw += w.recoil.yaw * kick * (Math.random() * 2 - 1)
       this.events.push('fire')
       // the M1 Garand throws its empty en-bloc clip out with a ping
       if (a.mag === 0 && w.reload.style === 'enbloc') this.events.push('ping')
