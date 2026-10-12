@@ -1,4 +1,4 @@
-// Local first-person controller: look, WASD movement, jump, crouch on the shared Rapier character motor.
+// Local first-person controller: look, WASD movement, sprint, jump, crouch on the shared Rapier character motor.
 import { PLAYER } from '@shared/constants.js'
 import { CharacterMotor } from '@shared/physics.js'
 
@@ -19,6 +19,7 @@ export class LocalPlayer {
     this.stepUp = 0 // eye offset easing out autostep / curb climbs
     this.stepDist = 0
     this.speed = 0
+    this.sprinting = false
     this.landed = 0
     this.fallSpeed = 0
     this.deathAt = 0
@@ -61,11 +62,12 @@ export class LocalPlayer {
   }
 
   /**
-   * ctl: { f, b, l, r, jump, crouch, ads, speedMul }  (booleans; ads is 0..1, speedMul from the weapon in hand)
+   * ctl: { f, b, l, r, jump, crouch, sprint, ads, speedMul }  (booleans; ads is 0..1, speedMul from the weapon in hand)
    * returns { steps: number of footsteps to play, landed: impact speed or 0 }
    */
   update (dt, ctl) {
     const out = { steps: 0, landed: 0 }
+    this.sprinting = false
     if (!this.alive) return out
     this.motor.setCrouch(ctl.crouch)
     let fx = 0; let fz = 0
@@ -75,6 +77,8 @@ export class LocalPlayer {
     if (ctl.r) fx += 1
     const len = Math.hypot(fx, fz)
     let speed = this.motor.crouched ? PLAYER.crouchSpeed : PLAYER.walkSpeed
+    this.sprinting = !!ctl.sprint && !this.motor.crouched && fz < 0
+    if (this.sprinting) speed *= PLAYER.sprintMul
     speed *= 1 - (1 - PLAYER.adsSpeedMul) * ctl.ads
     speed *= ctl.speedMul ?? 1 // weapon weight
     if (fz > 0) speed *= 0.9 // backpedal slower

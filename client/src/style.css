@@ -134,6 +134,12 @@ canvas#game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: b
 #ammo-bullets i.spent { background: rgba(255,255,255,.12); box-shadow: none; }
 #ammo-bullets.dense { gap: 1px; height: 12px; }
 #ammo-bullets.dense i { width: 2px; height: 12px; }
+#nades { display: flex; justify-content: flex-end; gap: 8px; height: 26px; margin-bottom: 6px; }
+#nades i { position: relative; width: 12px; height: 26px; transform: rotate(-24deg); filter: drop-shadow(0 0 1px #000) drop-shadow(0 0 2px rgba(0,0,0,.7)); }
+#nades i::before { content: ''; position: absolute; left: 0; top: 0; width: 12px; height: 10px; border-radius: 2px; background: #a3ab88; }
+#nades i::after { content: ''; position: absolute; left: 4px; top: 10px; width: 4px; height: 16px; background: #c08a4e; }
+#nades i.spent { filter: none; }
+#nades i.spent::before, #nades i.spent::after { background: rgba(255,255,255,.12); }
 #weapon-hint { font-size: 15px; color: var(--accent); margin-top: 6px; min-height: 20px; letter-spacing: 0.06em; }
 
 #damage-dirs { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }

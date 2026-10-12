@@ -4,10 +4,11 @@ import path from 'node:path'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { TICK_RATE, SNAPSHOT_RATE, MATCH, PLAYER, BOT_NAMES } from '../shared/constants.js'
 import {
-  WEAPONS, WEAPON_CODE, CLASS_IDS, CLASSES, damageFor, canUse, sanitizeLoadout, isValidLoadout, startingAmmo
+  WEAPONS, WEAPON_CODE, CLASS_IDS, CLASSES, GRENADE, damageFor, blastDamage, canUse, sanitizeLoadout, isValidLoadout, startingAmmo
 } from '../shared/weapons.js'
 import { parseGlbJson, extractMapData } from '../shared/mapdata.js'
-import { buildMapWorld, rayMap } from '../shared/physics.js'
+import { buildMapWorld, rayMap, lineOfSight } from '../shared/physics.js'
+import { NADE_DT, createGrenade, stepGrenade } from '../shared/grenade.js'
 import { rayVsPlayer } from '../shared/hitbox.js'
 import { NavGrid } from './navgrid.js'
 import { Bot } from './bot.js'
@@ -21,6 +22,7 @@ export class Game {
     this.io = io
     this.root = root
     this.players = new Map()
+    this.grenades = []
     this.nextId = 1
     this.startedAt = Date.now()
     this.botNames = [...BOT_NAMES].sort(() => Math.random() - 0.5)
@@ -69,6 +71,7 @@ export class Game {
     channel.on('join', (data) => this.join(channel, data))
     channel.on('st', (data) => { const p = channel.player; if (p) this.handleState(p, data) })
     channel.on('fire', (data) => { const p = channel.player; if (p) this.handleFire(p, data) })
+    channel.on('nade', (data) => { const p = channel.player; if (p) this.handleNade(p, data) })
     channel.on('loadout', (data) => { const p = channel.player; if (p) this.handleLoadout(p, data) })
     channel.on('team', (data) => { const p = channel.player; if (p) this.handleTeam(p, data) })
     channel.on('pong', (data) => { const p = channel.player; if (p && data && typeof data.t === 'number') p.ping = Math.max(0, this.now() - data.t) })
@@ -153,6 +156,8 @@ export class Game {
       loadout: randomLoadout(team), // authoritative: what this life is armed with
       pendingLoadout: null, // applied at the next spawn
       ammo: {}, // weapon id -> rounds left this life (magazine + reserve)
+      grenades: 0,
+      nadeSeq: 0, // bots number their own throws; humans send theirs
       deployed: isBot, // humans deploy from the loadout screen
       spawnedAt: 0,
       lastLoadoutReq: 0,
@@ -250,6 +255,7 @@ export class Game {
       const a = startingAmmo(l.cls, l[slot], slot)
       p.ammo[l[slot]] = a.mag + a.reserve
     }
+    p.grenades = GRENADE.count
   }
 
   // ------------------------------------------------------------------ loadouts and teams
@@ -320,7 +326,7 @@ export class Game {
     const moved = Math.hypot(x - p.pos[0], z - p.pos[2])
     const b = this.map.bounds
     const outOfBounds = x < b.min[0] - 3 || x > b.max[0] + 3 || z < b.min[2] - 3 || z > b.max[2] + 3 || y < -5 || y > 25
-    if (moved > PLAYER.walkSpeed * 2.2 * dt + 1.5 || outOfBounds) {
+    if (moved > PLAYER.walkSpeed * PLAYER.sprintMul * 1.5 * dt + 1.5 || outOfBounds) {
       // implausible movement: pull the client back to the last accepted position
       p.channel.emit('tp', { life: p.life, pos: p.pos }, { reliable: true })
       p.lastStateAt = now
@@ -382,7 +388,60 @@ export class Game {
     this.applyDamage(target, p, damageFor(id, dist, zone), id, zone)
   }
 
+  // { o: eye position, d: view direction, k: the client's throw number (pairs its own visual with the blast) }
+  handleNade (p, msg) {
+    if (!p.alive || !(p.grenades > 0) || !msg) return
+    const o = msg.o; const d = msg.d
+    if (!validVec(o) || !validVec(d)) return
+    const eyeY = p.pos[1] + (p.crouch ? PLAYER.crouchEye : PLAYER.eye)
+    if (Math.hypot(o[0] - p.pos[0], o[1] - eyeY, o[2] - p.pos[2]) > 3) return
+    const len = Math.hypot(d[0], d[1], d[2])
+    if (len < 0.5 || len > 1.5) return
+    const k = Number.isInteger(msg.k) && msg.k >= 0 ? msg.k % 1e6 : 0
+    this.throwGrenade(p, o, d.map((v) => v / len), k)
+  }
+
   // ------------------------------------------------------------------ combat
+
+  throwGrenade (p, o, d, k = p.nadeSeq++) {
+    const now = this.now()
+    p.grenades--
+    p.firedAt = now
+    o = o.map(r3); d = d.map(r3) // the exact values the clients simulate from
+    this.grenades.push({ ...createGrenade(o, d), owner: p.id, team: p.team, k, acc: 0, explodeAt: now + GRENADE.fuse * 1000 })
+    this.emitOthers(p, 'nade', { id: p.id, k, o, d }, true)
+  }
+
+  updateGrenades (dt, now) {
+    for (const g of this.grenades) {
+      g.acc += dt
+      while (g.acc >= NADE_DT) { g.acc -= NADE_DT; stepGrenade(this.RAPIER, this.world, g) }
+    }
+    const due = this.grenades.filter((g) => now >= g.explodeAt)
+    if (!due.length) return
+    this.grenades = this.grenades.filter((g) => now < g.explodeAt)
+    for (const g of due) this.explode(g)
+  }
+
+  explode (g) {
+    this.emitAll('boom', { id: g.owner, k: g.k, p: g.pos.map(r2) }, true)
+    const thrower = this.players.get(g.owner)
+    if (!thrower || this.match.state !== 'playing') return
+    const c = [g.pos[0], g.pos[1] + 0.2, g.pos[2]]
+    for (const q of this.players.values()) {
+      if (!q.alive || (q.team === g.team && q !== thrower)) continue
+      // the blast reaches whichever of feet, chest and head is closest with nothing solid in between
+      const h = q.crouch ? PLAYER.crouchHeight : PLAYER.height
+      let dist = Infinity
+      for (const y of [0.3, h * 0.6, h - 0.15]) {
+        const pt = [q.pos[0], q.pos[1] + y, q.pos[2]]
+        const dd = Math.hypot(pt[0] - c[0], pt[1] - c[1], pt[2] - c[2])
+        if (dd < dist && dd < GRENADE.blastRadius && lineOfSight(this.RAPIER, this.world, c, pt)) dist = dd
+      }
+      const dmg = blastDamage(dist)
+      if (dmg > 0) this.applyDamage(q, thrower, dmg, GRENADE.id, 'body', g.pos)
+    }
+  }
 
   // Fires a bot weapon along dir from origin; resolves hits server-side.
   fireBot (p, weapon, o, d) {
@@ -402,18 +461,19 @@ export class Game {
     if (victim && this.match.state === 'playing') this.applyDamage(victim, p, damageFor(weapon, maxT, zone), weapon, zone)
   }
 
-  applyDamage (victim, attacker, amount, weapon, zone) {
+  // from: where the damage came from (the attacker, or the blast for grenades)
+  applyDamage (victim, attacker, amount, weapon, zone, from = attacker.pos) {
     const now = this.now()
     if (!victim.alive || now < victim.protectUntil || amount <= 0) return
     victim.hp -= amount
     victim.lastDamageAt = now
     const killed = victim.hp <= 0
     if (!victim.isBot) {
-      victim.channel.emit('dmg', { a: attacker.id, n: amount, hp: Math.max(0, Math.round(victim.hp)), from: attacker.pos.map(r2) }, { reliable: true })
+      victim.channel.emit('dmg', { a: attacker.id, n: amount, hp: Math.max(0, Math.round(victim.hp)), from: from.map(r2) }, { reliable: true })
     } else {
       victim.bot.onDamaged(attacker)
     }
-    if (!attacker.isBot) attacker.channel.emit('hit', { v: victim.id, hs: zone === 'head', k: killed }, { reliable: true })
+    if (!attacker.isBot && attacker !== victim) attacker.channel.emit('hit', { v: victim.id, hs: zone === 'head', k: killed }, { reliable: true })
     if (killed) this.kill(victim, attacker, weapon, zone === 'head')
   }
 
@@ -444,6 +504,7 @@ export class Game {
 
   restartMatch () {
     this.match = { state: 'playing', scores: { allies: 0, axis: 0 }, endsAt: this.now() + MATCH.timeLimit * 1000, restartAt: 0, winner: null }
+    this.grenades = []
     for (const p of this.players.values()) {
       p.kills = 0
       p.deaths = 0
@@ -462,6 +523,7 @@ export class Game {
     } else if (m.state === 'ended' && now >= m.restartAt) {
       this.restartMatch()
     }
+    this.updateGrenades(dt, now)
     // with nobody connected the bots idle instead of burning CPU
     const anyHumans = this.humans().length > 0
     for (const p of this.players.values()) {
@@ -482,8 +544,8 @@ export class Game {
     for (const p of this.players.values()) if (!p.isBot) p.channel.emit(event, data, reliable ? { reliable: true } : undefined)
   }
 
-  emitOthers (sender, event, data) {
-    for (const p of this.players.values()) if (!p.isBot && p !== sender) p.channel.emit(event, data)
+  emitOthers (sender, event, data, reliable = false) {
+    for (const p of this.players.values()) if (!p.isBot && p !== sender) p.channel.emit(event, data, reliable ? { reliable: true } : undefined)
   }
 
   broadcastSnapshot () {

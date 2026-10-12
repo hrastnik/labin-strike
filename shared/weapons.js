@@ -668,6 +668,33 @@ export const CLASSES = {
   }
 }
 
+// Every soldier carries the German stick grenade, whichever side they fight for. It is equipment, not one of the
+// two loadout weapons, so the faction rules above (canUse / isValidLoadout) do not apply to it.
+export const GRENADE = {
+  id: 'stielhandgranate',
+  name: 'Stielhandgranate 24',
+  count: 1, // per life
+  fuse: 3.5, // seconds from release
+  speed: 16, // m/s at release
+  loft: 0.18, // rad added above the view direction
+  gravity: 9.81,
+  radius: 0.05,
+  bounce: 0.35,
+  friction: 0.65,
+  windup: 0.3, // seconds from pressing G to release
+  recover: 0.25, // seconds from release until the weapon is drawn again
+  damage: 150,
+  killRadius: 2, // full damage inside this distance
+  blastRadius: 7.5 // no damage beyond this distance
+}
+
+export function blastDamage (distance) {
+  const { damage, killRadius, blastRadius } = GRENADE
+  if (!(distance < blastRadius)) return 0
+  if (distance <= killRadius) return damage
+  return Math.round(damage * (1 - (distance - killRadius) / (blastRadius - killRadius)))
+}
+
 export const CLASS_IDS = Object.keys(CLASSES)
 export const DEFAULT_CLASS = 'assault'
 export const FACTIONS = ['allies', 'axis']

@@ -2,7 +2,7 @@
 // It only ever lists the player's own faction; the server re-validates every request anyway.
 import * as THREE from 'three'
 import { TEAMS } from '@shared/constants.js'
-import { WEAPONS, CLASSES, CLASS_IDS, CATEGORY_NAMES, classOptions, sanitizeLoadout, startingAmmo } from '@shared/weapons.js'
+import { WEAPONS, CLASSES, CLASS_IDS, CATEGORY_NAMES, GRENADE, classOptions, sanitizeLoadout, startingAmmo } from '@shared/weapons.js'
 import { buildGun } from './gunmodels.js'
 
 const $ = (id) => document.getElementById(id)
@@ -172,6 +172,7 @@ export class LoadoutMenu {
       ${statBars(p)}
       ${facts(p, pa)}
       <div class="lo-sub">Sidearm · <b>${esc(s.name)}</b> <small>${sa.mag} + ${sa.reserve} · ${s.damage} dmg</small></div>
+      <div class="lo-sub">Grenade · <b>${esc(GRENADE.name)}</b> <small>×${GRENADE.count} · ${GRENADE.fuse} s fuse · <kbd>G</kbd> to throw</small></div>
       <div class="lo-sub">Equipment · ${c.kit.map(esc).join(', ')}</div>`
 
     if (this.mode === 'change' && this.current && sel.cls === this.current.cls && sel.primary === this.current.primary && sel.secondary === this.current.secondary) {

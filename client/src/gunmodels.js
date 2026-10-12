@@ -20,6 +20,7 @@ export const M = {
   skin: mat('#c99a78', { roughness: 0.8 }),
   glove: mat('#3a2f25', { roughness: 0.9 }),
   brass: mat('#c9a043', { metalness: 0.8, roughness: 0.3 }),
+  feldgrau: mat('#565c4b', { metalness: 0.35, roughness: 0.6 }),
   glass: mat('#203040', { metalness: 0.9, roughness: 0.15 })
 }
 
@@ -819,4 +820,29 @@ export function buildViewmodel (id, sleeveColor) {
   spec.root = root
   if (spec.magHidden) spec.mag.visible = false
   return spec
+}
+
+// ------------------------------------------------------------------ Stielhandgranate 24
+
+// stick grenade standing on +Y: wooden handle below, charge head on top; origin near the balance point
+export function buildGrenade () {
+  const g = new THREE.Group()
+  cylY(0.034, 0.1, M.feldgrau, 0, 0.12, 0, g, 10)
+  cylY(0.036, 0.012, M.steelLight, 0, 0.068, 0, g, 10)
+  cylY(0.014, 0.27, M.wood, 0, -0.07, 0, g, 8)
+  cylY(0.016, 0.016, M.steelLight, 0, -0.21, 0, g, 8) // screw cap over the pull cord
+  return g
+}
+
+// right hand holding a grenade by the handle, for the first-person throw
+export function buildGrenadeViewmodel (sleeveColor) {
+  const root = new THREE.Group()
+  const nade = buildGrenade()
+  nade.position.y = 0.06
+  root.add(nade)
+  const h = hand(0, -0.06, 0.022, -Math.PI / 2, M.skin, root)
+  h.rotation.y = Math.PI
+  limb([0.005, -0.1, 0.03], [0.06, -0.3, 0.12], 0.028, 0.036, M.skin, root)
+  limb([0.04, -0.24, 0.09], [0.1, -0.52, 0.2], 0.04, 0.05, makeSleeve(sleeveColor), root)
+  return { root, nade }
 }

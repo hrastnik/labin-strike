@@ -15,6 +15,7 @@ import { WeaponSystem } from './weapons.js'
 import { Viewmodel } from './viewmodel.js'
 import { Avatars } from './avatars.js'
 import { Effects } from './effects.js'
+import { Grenades } from './grenades.js'
 import { Audio } from './audio.js'
 import { Hud } from './hud.js'
 import { Net } from './net.js'
@@ -48,6 +49,8 @@ const G = {
   fps: 0,
   hits: 0,
   shots: 0,
+  nadeSeq: 0,
+  shake: 0, // camera shake from nearby blasts, 0..1
   tps: 0, // server position corrections received
   trace: null // test helper: per-frame [t, camX, camY, camZ]
 }
@@ -75,6 +78,7 @@ const net = new Net()
 let world = null
 let mapData = null
 let player = null
+let grenades = null
 let cars = null
 
 function resize () {
@@ -232,6 +236,7 @@ function leave (msg) {
   G.myId = 0
   if (player) player.alive = false
   avatars.clear()
+  grenades?.clear()
   G.roster.clear()
   showMenu(true)
   hud.pause(false)
@@ -384,6 +389,23 @@ net.on('shot', (d) => {
   }
 })
 
+net.on('nade', (d) => {
+  if (G.state !== 'playing' || !grenades || d.id === G.myId) return
+  grenades.spawn(`${d.id}:${d.k}`, d.o, d.d)
+})
+
+net.on('boom', (d) => {
+  if (G.state !== 'playing' || !grenades) return
+  grenades.remove(`${d.id}:${d.k}`)
+  const pos = new THREE.Vector3(...d.p)
+  const below = rayMap(RAPIER, world, [pos.x, pos.y + 0.2, pos.z], [0, -1, 0], 0.8)
+  const scorch = below && below.normal[1] > 0.5 ? { point: new THREE.Vector3(pos.x, pos.y + 0.2 - below.dist, pos.z), normal: below.normal } : null
+  effects.explosion(pos.clone().setY(pos.y + 0.15), scorch)
+  const dist = pos.distanceTo(player.eyePos(tmpV))
+  audio.explosion(pos, dist)
+  if (player.alive) G.shake = Math.max(G.shake, Math.max(0, 1 - dist / 30) ** 2)
+})
+
 net.on('dmg', (d) => {
   if (!player) return
   player.hp = d.hp
@@ -490,6 +512,22 @@ function fireShot (spread) {
   net.emit('fire', msg)
 }
 const r2 = (v) => Math.round(v * 100) / 100
+const r3 = (v) => Math.round(v * 1000) / 1000
+
+// rounded and normalised exactly as the server does, so this visual follows the server's flight
+function throwGrenade () {
+  if (!player.alive) return
+  camera.getWorldPosition(tmpO)
+  camera.getWorldDirection(tmpV)
+  const o = [tmpO.x, tmpO.y, tmpO.z].map(r3)
+  const d0 = [tmpV.x, tmpV.y, tmpV.z].map(r3)
+  const len = Math.hypot(...d0)
+  const d = d0.map((v) => r3(v / len))
+  const k = G.nadeSeq++
+  grenades.spawn(`${G.myId}:${k}`, o, d)
+  net.emit('nade', { o, d, k }, true)
+  audio.nadeThrow()
+}
 
 // what's under the crosshair (for name display / crosshair colour)
 function crosshairTarget () {
@@ -525,6 +563,7 @@ async function boot () {
     }
     fitSunToBounds(sun, mapData.bounds)
     player = new LocalPlayer(RAPIER, world)
+    grenades = new Grenades(scene, RAPIER, world)
     hud.buildMinimap(mapData)
     viewmodel.setTeam('allies')
     // warm up shaders so the first frame in-game does not hitch
@@ -569,6 +608,7 @@ function frame () {
   }
 
   effects.update(dt)
+  grenades?.update(dt, (pos, impact) => audio.nadeBounce(pos, Math.min(1, impact / 10)))
   cars?.update(camera.position, dt)
   renderer.clear()
   renderer.render(scene, camera)
@@ -615,18 +655,26 @@ function updateGame (dt, now) {
     ads: canAct && input.mouse.right,
     reload: canAct && input.wasPressed('KeyR'),
     switchTo: player.alive && !loadoutMenu.isOpen ? switchTo : null,
+    throwNade: canAct && input.wasPressed('KeyG'),
+    sprint: player.sprinting,
     alive: canAct
   }, { speed: player.speed, grounded: player.grounded, crouched: player.crouched })
 
   // movement (frozen while the loadout screen is up)
   const steer = !loadoutMenu.isOpen
+  const forward = steer && (input.down('KeyW') || input.down('ArrowUp'))
+  const crouch = steer && (input.down('KeyC') || input.down('ControlLeft'))
+  // aiming or pulling the trigger drops out of the sprint
+  const sprint = forward && !crouch && (input.down('ShiftLeft') || input.down('ShiftRight')) &&
+    !(canAct && (input.mouse.left || input.mouse.right)) && !weapons.throwing
   const move = player.update(dt, {
-    f: steer && (input.down('KeyW') || input.down('ArrowUp')),
+    f: forward,
     b: steer && (input.down('KeyS') || input.down('ArrowDown')),
     l: steer && (input.down('KeyA') || input.down('ArrowLeft')),
     r: steer && (input.down('KeyD') || input.down('ArrowRight')),
     jump: steer && input.wasPressed('Space'),
-    crouch: steer && (input.down('KeyC') || input.down('ControlLeft')),
+    crouch,
+    sprint,
     ads: weapons.adsT,
     speedMul: weapons.def.moveMul
   })
@@ -638,6 +686,10 @@ function updateGame (dt, now) {
   if (player.alive) {
     player.eyePos(camera.position)
     camera.rotation.set(player.pitch + ws.punch.pitch, player.yaw + ws.punch.yaw, 0)
+    if (G.shake > 0.001) {
+      camera.rotation.x += (Math.random() - 0.5) * 0.06 * G.shake
+      camera.rotation.y += (Math.random() - 0.5) * 0.06 * G.shake
+    }
     deathRoll = 0
   } else if (player.deathPos) {
     // slump to the ground
@@ -647,6 +699,7 @@ function updateGame (dt, now) {
     deathRoll += (0.45 - deathRoll) * Math.min(1, dt * 5)
     camera.rotation.set(player.pitch * (1 - k) - 0.15 * k, player.yaw, deathRoll)
   }
+  G.shake *= Math.exp(-dt * 4)
   const targetFov = BASE_FOV + (ws.def.adsFov - BASE_FOV) * ws.adsT
   if (Math.abs(targetFov - fovCurrent) > 0.01) {
     fovCurrent = targetFov
@@ -669,6 +722,8 @@ function updateGame (dt, now) {
     else if (ev === 'reload') audio.reload(ws.id, ws.reloadDur, ws.reloadSteps)
     else if (ev === 'switch') audio.weaponSwitch()
     else if (ev === 'ping') { audio.ping(); viewmodel.ping() }
+    else if (ev === 'windup') audio.nadeWindup()
+    else if (ev === 'throw') throwGrenade()
   }
 
   // send state
@@ -695,11 +750,13 @@ function updateGame (dt, now) {
     dt,
     weapon: ws.id,
     ads: ws.adsT,
+    sprint: ws.sprintT,
     speed: player.speed,
     grounded: player.grounded,
     crouched: player.crouched,
     reloadFrac: ws.reloading ? 1 - ws.reloadT / ws.reloadDur : -1,
     drawFrac: ws.drawing ? ws.drawT / ws.def.drawTime : 0,
+    throwFrac: ws.throwFrac,
     cycleFrac: ws.cycleFrac,
     reloadSteps: ws.reloadSteps,
     mag: ws.clip.mag,
@@ -713,7 +770,7 @@ function updateGame (dt, now) {
   hud.health(player.hp, player.alive)
   hud.weapon(ws)
   const spread = ws.spread({ speed: player.speed, grounded: player.grounded, crouched: player.crouched })
-  hud.crosshair(spread, fovCurrent, player.alive && ws.adsT < 0.5 && !ws.reloading, player.alive ? crosshairTarget() : null)
+  hud.crosshair(spread, fovCurrent, player.alive && ws.adsT < 0.5 && !ws.reloading && ws.sprintT < 0.5 && !ws.throwing, player.alive ? crosshairTarget() : null)
   hud.scores(G.match, G.team)
   hud.timer((G.matchEndsLocal - now) / 1000, G.match.state)
   const next = G.pending ? `Next spawn: ${loadoutLabel(G.pending)}` : 'Press B to change loadout'
@@ -763,6 +820,10 @@ window.__labin = {
     pos: player ? [player.pos.x, player.pos.y, player.pos.z].map(r2) : null,
     weapon: weapons.id,
     ammo: weapons.clip,
+    grenades: weapons.grenades,
+    grenadesInFlight: grenades?.live.size,
+    sprinting: player?.sprinting,
+    speed: player?.speed,
     loadout: G.loadout,
     pending: G.pending,
     deployed: G.deployed,

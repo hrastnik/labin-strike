@@ -1,6 +1,7 @@
 // Server-side TDM bot: patrols via the nav grid, acquires targets by line of sight,
 // tracks them with human-like turn rates / aim error and fires bursts with weapon spread.
 import { PLAYER, WEAPONS } from '../shared/constants.js'
+import { GRENADE } from '../shared/weapons.js'
 import { CharacterMotor, lineOfSight } from '../shared/physics.js'
 
 const TAU = Math.PI * 2
@@ -52,6 +53,7 @@ export class Bot {
     this.lastHurtBy = null
     this.lastHurtAt = -1e9
     this.aimHead = false
+    this.nadeRollAt = 0
   }
 
   dispose () { this.motor.dispose() }
@@ -182,6 +184,7 @@ export class Bot {
       this.tryFire(now, tgt, flat, ml > 0.01)
     } else {
       this.burstLeft = 0
+      if (active) this.maybeThrowGrenade(now)
       if (!this.reloadUntil && this.mag < w.mag * 0.4) this.reloadUntil = now + w.reloadTime * 1000
       // ----- navigation: last seen target > alert > patrol
       let dest = null
@@ -303,6 +306,32 @@ export class Bot {
       this.reloadUntil = now + w.reloadTime * 1000
       this.burstShots = 0
     }
+  }
+
+  // lob the grenade at an enemy who just ducked out of sight
+  maybeThrowGrenade (now) {
+    const p = this.p
+    if (!(p.grenades > 0) || !this.target || !this.lastSeenPos || now < this.nadeRollAt) return
+    const lost = now - this.lastSeenAt
+    if (lost < 700 || lost > 4000) return
+    this.nadeRollAt = now + 5000
+    if (Math.random() > 0.15 + 0.4 * this.skill) return
+    const eye = this.eye()
+    const t = this.lastSeenPos
+    const dx = t[0] - eye[0]; const dz = t[2] - eye[2]
+    const x = Math.hypot(dx, dz) * 0.9 // short: it bounces on
+    if (x < 7 || x > 24) return
+    const y = t[1] + 0.3 - eye[1]
+    const v2 = GRENADE.speed ** 2; const g = GRENADE.gravity
+    const disc = v2 * v2 - g * (g * x * x + 2 * y * v2)
+    if (disc < 0) return
+    const err = 1.3 - this.skill
+    const pitch = Math.atan((v2 - Math.sqrt(disc)) / (g * x)) - GRENADE.loft + (Math.random() - 0.5) * 0.08 * err
+    const yaw = Math.atan2(-dx, -dz) + (Math.random() - 0.5) * 0.1 * err
+    const d = [-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)]
+    if (!lineOfSight(this.g.RAPIER, this.g.world, eye, [eye[0] + d[0] * 2, eye[1] + d[1] * 2, eye[2] + d[2] * 2])) return
+    p.yaw = yaw
+    this.g.throwGrenade(p, eye, d)
   }
 
   setGoal (pos) {
