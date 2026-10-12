@@ -33,6 +33,8 @@ export class Hud {
       death: $('death'),
       deathBy: $('death-by'),
       deathRespawn: $('death-respawn'),
+      deathNext: $('death-next'),
+      scope: $('scope'),
       scoreboard: $('scoreboard'),
       netstat: $('netstat'),
       pause: $('pause'),
@@ -84,6 +86,7 @@ export class Hud {
       const html = []
       for (let i = 0; i < w.mag; i++) html.push(`<i${i >= a.mag ? ' class="spent"' : ''}></i>`)
       this.el.ammoBullets.innerHTML = html.join('')
+      this.el.ammoBullets.classList.toggle('dense', w.mag > 35) // belts
     })
     let hint = ''
     if (ws.reloading) hint = 'Reloading…'
@@ -165,10 +168,15 @@ export class Hud {
     setTimeout(() => d.remove(), 7000)
   }
 
-  death (show, killerName, secondsLeft) {
+  scope (on) {
+    this.set('scope', on, (v) => this.el.scope.classList.toggle('hidden', !v))
+  }
+
+  death (show, killerName, secondsLeft, nextText = '') {
     this.el.death.classList.toggle('hidden', !show)
     if (!show) return
     this.set('deathby', killerName, (v) => { this.el.deathBy.textContent = v ? `by ${v}` : '' })
+    this.set('deathnext', nextText, (v) => { this.el.deathNext.textContent = v })
     const s = Math.max(0, Math.ceil(secondsLeft))
     this.set('respawn', s, (v) => { this.el.deathRespawn.textContent = v > 0 ? `Respawning in ${v}…` : 'Respawning…' })
   }

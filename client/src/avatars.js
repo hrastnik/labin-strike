@@ -1,6 +1,8 @@
 // Remote players: procedural low-poly soldiers, snapshot interpolation and simple procedural animation.
 import * as THREE from 'three'
 import { PLAYER } from '@shared/constants.js'
+import { WEAPONS, WEAPON_LIST } from '@shared/weapons.js'
+import { buildGun } from './gunmodels.js'
 
 const STYLE = {
   allies: { uniform: '#6a6f3e', trousers: '#5f6238', webbing: '#b5a477', helmet: '#4f5631', boots: '#4a3524', marker: '#9fc16a' },
@@ -15,7 +17,20 @@ function mat (color) {
 const SKIN = '#c49473'
 const FRIEND_TAG = '#8fd8ff'
 const GUNMETAL = '#2b2c2e'
-const WOOD = '#5f3d22'
+
+// one template per weapon; soldiers clone it (geometry and materials shared)
+const gunTemplates = new Map()
+function gunTemplate (id) {
+  let t = gunTemplates.get(id)
+  if (!t) {
+    const spec = buildGun(id)
+    spec.gun.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.userData.shared = true } })
+    spec.mag.visible = !spec.magHidden
+    t = { gun: spec.gun, muzzle: spec.muzzle.clone(), pistol: spec.kind === 'pistol' }
+    gunTemplates.set(id, t)
+  }
+  return t
+}
 
 function box (w, h, d, color, x, y, z, parent) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(color))
@@ -169,28 +184,42 @@ export class Avatar {
     foreL.rotation.z = -0.5
     box(0.08, 0.08, 0.09, SKIN, 0.17, -0.12, -0.5, shoulderL)
 
+    // long arms are shouldered at the rifle pivot, sidearms held out in front
     this.rifle = pivot(0.06, -0.14, -0.3, this.aim)
-    box(0.05, 0.08, 0.5, GUNMETAL, 0, 0, -0.1, this.rifle)
-    box(0.04, 0.04, 0.3, GUNMETAL, 0, 0.01, -0.5, this.rifle)
-    box(0.04, 0.14, 0.05, GUNMETAL, 0, -0.1, -0.12, this.rifle)
-    box(0.045, 0.1, 0.25, WOOD, 0, -0.03, 0.25, this.rifle)
     this.pistol = pivot(0.0, -0.16, -0.5, this.aim)
-    box(0.04, 0.05, 0.18, GUNMETAL, 0, 0, 0, this.pistol)
-    box(0.035, 0.1, 0.05, WOOD, 0, -0.06, 0.06, this.pistol)
-    this.pistol.visible = false
+    this.guns = new Map()
+    this.weaponId = null
 
     if (!flashMat) flashMat = flashSprite()
     this.flash = new THREE.Sprite(flashMat)
     this.flash.scale.setScalar(0.5)
     this.flash.visible = false
-    this.flashPivot = pivot(0, 0, -0.68, this.rifle)
+    this.flashPivot = new THREE.Group()
     this.flashPivot.add(this.flash)
+    this.setWeapon('stg44')
 
     if (this.friendly) {
       this.tag = nameSprite(this.name, FRIEND_TAG)
       this.tag.position.set(0, 2.25, 0)
       root.add(this.tag)
     }
+  }
+
+  setWeapon (id) {
+    if (id === this.weaponId) return
+    if (this.weaponId) this.guns.get(this.weaponId).visible = false
+    this.weaponId = id
+    const t = gunTemplate(id)
+    let g = this.guns.get(id)
+    if (!g) {
+      g = t.gun.clone()
+      ;(t.pistol ? this.pistol : this.rifle).add(g)
+      this.guns.set(id, g)
+    }
+    g.visible = true
+    g.add(this.flashPivot)
+    this.flashPivot.position.copy(t.muzzle)
+    this.flash.scale.setScalar(0.5 * Math.max(0.7, WEAPONS[id].fx.flash))
   }
 
   setName (name) {
@@ -284,13 +313,7 @@ export class Avatar {
     this.head.rotation.x = this.pitch * 0.4
     this.torso.rotation.y = Math.sin(this.walkPhase) * 0.06 * sp
 
-    const pistol = this.weapon === 1
-    this.rifle.visible = !pistol
-    this.pistol.visible = pistol
-    if (this.flashPivot.parent !== (pistol ? this.pistol : this.rifle)) {
-      (pistol ? this.pistol : this.rifle).add(this.flashPivot)
-      this.flashPivot.position.set(0, 0, pistol ? -0.14 : -0.68)
-    }
+    this.setWeapon(WEAPON_LIST[this.weapon] || 'stg44')
     if (this.flashT > 0) {
       this.flashT -= dt
       this.flash.visible = this.alive
@@ -319,7 +342,7 @@ export class Avatar {
   get hitPos () { return [this.pos.x, this.pos.y, this.pos.z] }
 
   dispose () {
-    this.root.traverse((o) => { if (o.isMesh) o.geometry.dispose() })
+    this.root.traverse((o) => { if (o.isMesh && !o.userData.shared) o.geometry.dispose() })
     if (this.tag) { this.tag.material.map.dispose(); this.tag.material.dispose() }
     this.root.parent?.remove(this.root)
   }

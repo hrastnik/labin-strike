@@ -132,6 +132,8 @@ canvas#game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: b
 #ammo-bullets { display: flex; justify-content: flex-end; gap: 2px; margin-top: 6px; height: 16px; flex-wrap: wrap-reverse; max-width: 240px; margin-left: auto; }
 #ammo-bullets i { width: 4px; height: 16px; background: linear-gradient(#e8c66a 0 30%, #b08a3a 30%); border-radius: 2px 2px 0 0; box-shadow: 0 0 2px rgba(0,0,0,.6); }
 #ammo-bullets i.spent { background: rgba(255,255,255,.12); box-shadow: none; }
+#ammo-bullets.dense { gap: 1px; height: 12px; }
+#ammo-bullets.dense i { width: 2px; height: 12px; }
 #weapon-hint { font-size: 15px; color: var(--accent); margin-top: 6px; min-height: 20px; letter-spacing: 0.06em; }
 
 #damage-dirs { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
@@ -215,6 +217,95 @@ kbd { font-family: 'Oswald', sans-serif; font-size: 11px; color: var(--ink); bor
 #loading .bar { height: 4px; background: rgba(255,255,255,.12); }
 #loading .fill { height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
 #loading-text { margin-top: 8px; font-size: 13px; letter-spacing: 0.12em; color: var(--ink-dim); text-transform: uppercase; }
+
+/* ------------------------------------------------------------- scope */
+#scope { position: absolute; inset: 0; pointer-events: none; }
+#scope .lens {
+  position: absolute; left: 50%; top: 50%; width: 92vmin; height: 92vmin; transform: translate(-50%, -50%);
+  border-radius: 50%; box-shadow: 0 0 0 200vmax #050504, inset 0 0 4vmin 2vmin rgba(0, 0, 0, 0.9);
+}
+#scope .lens i { position: absolute; background: #0b0b09; }
+#scope .lens .h { left: 0; right: 0; top: 50%; height: 2px; margin-top: -1px; }
+#scope .lens .v { left: 50%; top: 50%; bottom: 0; width: 2px; margin-left: -1px; }
+#scope .lens .post { left: 50%; top: 50%; width: 8px; height: 22%; margin-left: -4px; clip-path: polygon(50% 0, 100% 9%, 100% 100%, 0 100%, 0 9%); }
+
+#death .next { font-size: 14px; margin-top: 10px; color: var(--accent); letter-spacing: 0.08em; }
+#pause .pause-actions { display: flex; gap: 10px; margin-top: 18px; }
+#pause .pause-actions button { margin-top: 0; }
+
+.seg { display: flex; gap: 0; }
+.seg button {
+  margin: 0; font-size: 13px; letter-spacing: 0.1em; padding: 8px 6px;
+  background: rgba(0,0,0,.45); color: var(--ink-dim); border: 1px solid var(--panel-edge);
+}
+.seg button + button { border-left: none; }
+.seg button:hover:not(:disabled) { background: rgba(217, 181, 90, 0.18); color: var(--ink); }
+.seg button.sel { background: var(--accent); color: #1a1710; }
+
+/* ------------------------------------------------------------- loadout */
+#loadout {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 5;
+  background: radial-gradient(ellipse at 50% 40%, rgba(16, 15, 10, 0.55), rgba(6, 6, 4, 0.88));
+  --team: var(--allies);
+}
+#loadout[data-team=axis] { --team: var(--axis); }
+.lo-panel {
+  width: min(1180px, calc(100vw - 32px)); max-height: calc(100vh - 32px); display: flex; flex-direction: column;
+  background: rgba(22, 21, 15, 0.94); border: 1px solid var(--panel-edge); border-top: 3px solid var(--team);
+  box-shadow: 0 20px 60px rgba(0,0,0,.6);
+}
+.lo-head { display: flex; align-items: center; gap: 18px; padding: 16px 20px 12px; border-bottom: 1px solid var(--panel-edge); }
+.lo-faction { display: flex; align-items: center; gap: 12px; min-width: 220px; }
+.lo-faction .flag { width: 12px; height: 40px; background: var(--team); }
+.lo-team { font-family: 'Stardos Stencil', sans-serif; font-size: 30px; line-height: 1; color: var(--team); letter-spacing: 0.06em; text-transform: uppercase; }
+.lo-force { font-family: 'Special Elite', monospace; font-size: 13px; color: var(--ink-dim); margin-top: 3px; }
+.lo-title { flex: 1; text-align: center; font-size: 15px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ink-dim); }
+.lo-head-actions { display: flex; gap: 8px; }
+.lo-head-actions button { width: auto; margin: 0; padding: 7px 12px; font-size: 13px; }
+.lo-body { display: grid; grid-template-columns: 220px minmax(0, 1fr) 340px; gap: 18px; padding: 16px 20px; overflow: auto; min-height: 0; }
+.lo-section { font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-dim); margin: 0 0 8px; }
+.lo-section + .lo-list { margin-bottom: 16px; }
+.lo-classes { display: flex; flex-direction: column; gap: 6px; }
+.lo-class, .lo-weapon {
+  display: block; width: 100%; margin: 0; padding: 9px 12px; text-align: left; text-transform: none; letter-spacing: 0.02em;
+  background: rgba(0,0,0,.35); color: var(--ink); border: 1px solid var(--panel-edge); border-left: 3px solid transparent;
+}
+.lo-class:hover:not(:disabled), .lo-weapon:hover:not(:disabled) { background: rgba(239, 230, 200, 0.07); }
+.lo-class.sel, .lo-weapon.sel { border-color: rgba(217, 181, 90, 0.6); border-left-color: var(--accent); background: rgba(217, 181, 90, 0.13); }
+.lo-class b { display: block; font-family: 'Stardos Stencil', sans-serif; font-weight: 700; font-size: 19px; letter-spacing: 0.06em; }
+.lo-class small, .lo-weapon small { display: block; font-size: 12px; color: var(--ink-dim); letter-spacing: 0.04em; margin-top: 2px; }
+.lo-cur { font-family: 'Oswald', sans-serif; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); margin-left: 8px; vertical-align: middle; }
+.lo-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.lo-weapon { padding: 8px 10px 9px; }
+.lo-weapon img, .lo-weapon .noimg { display: block; width: 100%; aspect-ratio: 3 / 1; object-fit: contain; filter: drop-shadow(0 2px 3px rgba(0,0,0,.7)); }
+.lo-weapon b { display: block; font-size: 16px; font-weight: 600; margin-top: 4px; }
+.lo-detail { border-left: 1px solid var(--panel-edge); padding-left: 18px; font-size: 14px; }
+.lo-class-desc { color: var(--ink-dim); font-size: 13px; margin-bottom: 8px; }
+.lo-class-desc b { color: var(--team); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.lo-big img { display: block; width: 100%; aspect-ratio: 3 / 1; object-fit: contain; filter: drop-shadow(0 3px 4px rgba(0,0,0,.75)); }
+.lo-wname { font-family: 'Stardos Stencil', sans-serif; font-size: 26px; letter-spacing: 0.04em; margin-top: 4px; }
+.lo-wname small { display: block; font-family: 'Oswald', sans-serif; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-dim); }
+.lo-desc { font-family: 'Special Elite', monospace; font-size: 13px; color: var(--ink-dim); margin: 6px 0 12px; line-height: 1.35; }
+.lo-stat { display: grid; grid-template-columns: 74px 1fr; align-items: center; gap: 10px; margin: 5px 0; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-dim); }
+.lo-stat .bar { height: 7px; background: rgba(0,0,0,.5); border: 1px solid var(--panel-edge); }
+.lo-stat .bar i { display: block; height: 100%; background: linear-gradient(90deg, #a59b74, #e3d6a8); }
+.lo-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 12px; margin: 12px 0; font-size: 12px; color: var(--ink-dim); letter-spacing: 0.04em; }
+.lo-facts b { color: var(--ink); font-weight: 600; }
+.lo-sub { padding-top: 8px; margin-top: 8px; border-top: 1px solid rgba(239, 230, 200, 0.08); font-size: 13px; color: var(--ink-dim); }
+.lo-sub b { color: var(--ink); font-weight: 600; }
+.lo-foot { display: flex; align-items: center; gap: 18px; padding: 12px 20px 16px; border-top: 1px solid var(--panel-edge); }
+#lo-status { flex: 1; font-size: 14px; color: var(--ink-dim); }
+#lo-status.error { color: #ff8a6b; }
+#lo-deploy { width: 260px; margin: 0; }
+
+@media (max-width: 960px) {
+  .lo-body { grid-template-columns: 1fr; }
+  .lo-classes { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .lo-detail { border-left: none; padding-left: 0; }
+  .lo-head { flex-wrap: wrap; }
+  .lo-title { display: none; }
+  #lo-deploy { width: 50%; }
+}
 
 @media (max-width: 720px) {
   #bottom-left { width: 220px; }

@@ -61,7 +61,7 @@ export class LocalPlayer {
   }
 
   /**
-   * ctl: { f, b, l, r, jump, crouch, ads }  (booleans; ads is 0..1)
+   * ctl: { f, b, l, r, jump, crouch, ads, speedMul }  (booleans; ads is 0..1, speedMul from the weapon in hand)
    * returns { steps: number of footsteps to play, landed: impact speed or 0 }
    */
   update (dt, ctl) {
@@ -76,6 +76,7 @@ export class LocalPlayer {
     const len = Math.hypot(fx, fz)
     let speed = this.motor.crouched ? PLAYER.crouchSpeed : PLAYER.walkSpeed
     speed *= 1 - (1 - PLAYER.adsSpeedMul) * ctl.ads
+    speed *= ctl.speedMul ?? 1 // weapon weight
     if (fz > 0) speed *= 0.9 // backpedal slower
     let wx = 0; let wz = 0
     if (len > 0) {

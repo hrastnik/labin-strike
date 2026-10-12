@@ -1,4 +1,9 @@
 // Procedural WebAudio: gunshots (local + spatialised remote), reload/dry clicks, footsteps, hit/kill cues.
+// Each weapon's report is shaped by its fx.sound profile in shared/weapons.js.
+import { WEAPONS } from '@shared/weapons.js'
+
+const DEFAULT_SOUND = WEAPONS.stg44.fx.sound
+
 export class Audio {
   constructor () {
     this.ctx = null
@@ -70,14 +75,14 @@ export class Audio {
     return p
   }
 
-  // weapon: 'rifle' | 'pistol'; pos null = local (non-spatial); dist used for muffling distant shots
+  // weapon: weapon id; pos null = local (non-spatial); dist used for muffling distant shots
   shot (weapon, pos = null, dist = 0) {
     if (!this.ctx || !this.enabled) return
     const ctx = this.ctx
     const t = ctx.currentTime
     const dest = this.out(pos)
     const far = Math.min(1, dist / 90)
-    const rifle = weapon === 'rifle'
+    const snd = (Object.hasOwn(WEAPONS, weapon) && WEAPONS[weapon].fx.sound) || DEFAULT_SOUND
 
     // crack: filtered noise burst
     const n = ctx.createBufferSource()
@@ -85,23 +90,23 @@ export class Audio {
     n.playbackRate.value = 0.9 + Math.random() * 0.2
     const bp = ctx.createBiquadFilter()
     bp.type = 'lowpass'
-    bp.frequency.setValueAtTime((rifle ? 6500 : 5200) * (1 - far * 0.8), t)
-    bp.frequency.exponentialRampToValueAtTime(rifle ? 900 : 700, t + 0.18)
+    bp.frequency.setValueAtTime(snd.crack * (1 - far * 0.8), t)
+    bp.frequency.exponentialRampToValueAtTime(snd.crackEnd, t + 0.18)
     const g = ctx.createGain()
-    const vol = pos ? 1.0 : 0.85
+    const vol = (pos ? 1.0 : 0.85) * snd.vol
     g.gain.setValueAtTime(0.0001, t)
     g.gain.exponentialRampToValueAtTime(vol, t + 0.003)
-    g.gain.exponentialRampToValueAtTime(0.0001, t + (rifle ? 0.32 : 0.24) + far * 0.3)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + snd.decay + far * 0.3)
     n.connect(bp); bp.connect(g); g.connect(dest)
     n.start(t, Math.random() * 0.5, 0.8)
 
     // thump: pitched-down sine body
     const o = ctx.createOscillator()
     o.type = 'sine'
-    o.frequency.setValueAtTime(rifle ? 140 : 180, t)
+    o.frequency.setValueAtTime(snd.body, t)
     o.frequency.exponentialRampToValueAtTime(40, t + 0.14)
     const og = ctx.createGain()
-    og.gain.setValueAtTime(pos ? 0.6 : 0.9, t)
+    og.gain.setValueAtTime((pos ? 0.6 : 0.9) * snd.vol, t)
     og.gain.exponentialRampToValueAtTime(0.0001, t + 0.16)
     o.connect(og); og.connect(dest)
     o.start(t); o.stop(t + 0.2)
@@ -111,8 +116,8 @@ export class Audio {
     r.buffer = this.brown
     const rg = ctx.createGain()
     rg.gain.setValueAtTime(0.0001, t)
-    rg.gain.exponentialRampToValueAtTime(0.35 + far * 0.4, t + 0.02)
-    rg.gain.exponentialRampToValueAtTime(0.0001, t + 0.7 + far * 0.5)
+    rg.gain.exponentialRampToValueAtTime(snd.tail + far * 0.4, t + 0.02)
+    rg.gain.exponentialRampToValueAtTime(0.0001, t + 0.7 + Math.max(0, snd.tail - 0.35) * 0.6 + far * 0.5)
     r.connect(rg); rg.connect(dest)
     r.start(t, Math.random(), 1.3)
   }
@@ -136,12 +141,61 @@ export class Audio {
 
   dry () { this.click(3200, 0.35, 0.025) }
 
-  reload (weapon, duration) {
-    // mag out, mag in, bolt/slide
-    this.click(1400, 0.3, 0.05, duration * 0.2)
-    this.click(1800, 0.35, 0.05, duration * 0.62)
-    this.click(2600, 0.4, 0.04, duration * 0.85)
-    if (weapon === 'rifle') this.click(1100, 0.35, 0.06, duration * 0.9)
+  // timings follow the viewmodel's reload animation for each style
+  reload (weapon, duration, steps = 1) {
+    const w = WEAPONS[weapon]
+    const style = w?.reload.style || 'mag'
+    if (style === 'charger' || style === 'single') {
+      this.click(1700, 0.3, 0.05, duration * 0.04) // bolt up
+      this.click(1200, 0.35, 0.06, duration * 0.12) // bolt back
+      const n = Math.max(1, steps)
+      for (let i = 0; i < n; i++) this.click(style === 'single' ? 2300 : 1500, 0.32, 0.07, duration * (0.15 + 0.68 * (i + 0.6) / n))
+      this.click(1300, 0.38, 0.06, duration * 0.88) // bolt forward
+      this.click(2100, 0.32, 0.04, duration * 0.95) // and down
+    } else if (style === 'enbloc') {
+      this.click(1600, 0.3, 0.05, duration * 0.3)
+      this.click(1300, 0.4, 0.05, duration * 0.58) // clip seated
+      this.click(950, 0.5, 0.07, duration * 0.73) // bolt slams home
+    } else if (style === 'belt') {
+      this.click(1500, 0.35, 0.06, duration * 0.15) // cover open
+      this.click(900, 0.4, 0.09, duration * 0.36) // box off
+      this.click(1000, 0.4, 0.09, duration * 0.6) // box on
+      this.click(1800, 0.3, 0.05, duration * 0.66) // belt laid
+      this.click(1200, 0.45, 0.06, duration * 0.78) // cover shut
+      this.click(1100, 0.4, 0.07, duration * 0.9) // charge
+    } else {
+      // mag out, mag in, bolt/slide
+      this.click(1400, 0.3, 0.05, duration * 0.2)
+      this.click(1800, 0.35, 0.05, duration * 0.62)
+      this.click(2600, 0.4, 0.04, duration * 0.85)
+      if (w?.category !== 'pistol') this.click(1100, 0.35, 0.06, duration * 0.9)
+    }
+  }
+
+  // working a bolt-action between shots
+  bolt (cycle) {
+    this.click(1700, 0.22, 0.04, cycle * 0.12)
+    this.click(1150, 0.3, 0.06, cycle * 0.35)
+    this.click(1350, 0.32, 0.05, cycle * 0.6)
+    this.click(2100, 0.24, 0.04, cycle * 0.8)
+  }
+
+  // the M1 Garand's empty en-bloc clip
+  ping () {
+    if (!this.ctx) return
+    const ctx = this.ctx
+    const t = ctx.currentTime + 0.03
+    for (const [f, v] of [[3150, 0.11], [4720, 0.05], [6900, 0.025]]) {
+      const o = ctx.createOscillator()
+      o.type = 'sine'
+      o.frequency.setValueAtTime(f, t)
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(0.0001, t)
+      g.gain.exponentialRampToValueAtTime(v, t + 0.004)
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55)
+      o.connect(g); g.connect(this.master)
+      o.start(t); o.stop(t + 0.6)
+    }
   }
 
   weaponSwitch () { this.click(1600, 0.2, 0.05); this.click(2400, 0.2, 0.03, 0.12) }

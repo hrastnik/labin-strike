@@ -17,9 +17,11 @@ export class Bot {
     this.motor = new CharacterMotor(game.RAPIER, game.world)
     this.skill = 0.45 + Math.random() * 0.4
     this.seed = Math.random() * 1000
-    this.weapon = 'rifle'
     this.reset()
   }
+
+  // bots fight with their primary; the loadout is re-rolled from their faction on every spawn
+  get wdef () { return WEAPONS[this.p.loadout.primary] }
 
   reset () {
     this.path = null
@@ -36,7 +38,7 @@ export class Bot {
     this.initErr = 0
     this.nextShotAt = 0
     this.burstLeft = 0
-    this.mag = WEAPONS.rifle.mag
+    this.mag = this.wdef.mag
     this.reloadUntil = 0
     this.strafeDir = 0
     this.strafeUntil = 0
@@ -134,12 +136,13 @@ export class Bot {
     }
     let tgt = this.target ? this.g.players.get(this.target) : null
     if (tgt && !tgt.alive) { this.target = null; this.visible = false; tgt = null; this.burstLeft = 0 }
-    if (this.reloadUntil && now >= this.reloadUntil) { this.reloadUntil = 0; this.mag = WEAPONS.rifle.mag }
+    const w = this.wdef
+    if (this.reloadUntil && now >= this.reloadUntil) { this.reloadUntil = 0; this.mag = w.mag }
 
     let wishX = 0; let wishZ = 0
     let lookYaw = p.yaw; let lookPitch = 0
     let crouch = false
-    const speed = PLAYER.walkSpeed * 0.92
+    const speed = PLAYER.walkSpeed * 0.92 * w.moveMul
 
     if (tgt && this.visible && active) {
       // ----- combat
@@ -179,7 +182,7 @@ export class Bot {
       this.tryFire(now, tgt, flat, ml > 0.01)
     } else {
       this.burstLeft = 0
-      if (!this.reloadUntil && this.mag < WEAPONS.rifle.mag * 0.4) this.reloadUntil = now + WEAPONS.rifle.reloadTime * 1000
+      if (!this.reloadUntil && this.mag < w.mag * 0.4) this.reloadUntil = now + w.reloadTime * 1000
       // ----- navigation: last seen target > alert > patrol
       let dest = null
       if (this.target && this.lastSeenPos && now - this.lastSeenAt < 7000) dest = this.lastSeenPos
@@ -254,7 +257,7 @@ export class Bot {
     p.posAt = now
     p.crouch = m.crouched
     p.reloading = !!this.reloadUntil
-    p.weapon = 0
+    p.slot = 0
   }
 
   tryFire (now, tgt, dist, moving) {
@@ -265,25 +268,33 @@ export class Bot {
     const aimY = tgt.pos[1] + (this.aimHead ? h - 0.17 : h * 0.6)
     const want = Math.atan2(-(tgt.pos[0] - eye[0]), -(tgt.pos[2] - eye[2]))
     if (Math.abs(wrap(want - p.yaw)) > 0.14) return
-    if (this.burstLeft <= 0) this.burstLeft = Math.round(3 + Math.random() * (dist < 15 ? 8 : 4))
+    const w = this.wdef
+    if (this.burstLeft <= 0) {
+      if (w.action === 'bolt') this.burstLeft = 1
+      else if (w.action === 'semi') this.burstLeft = Math.round(2 + Math.random() * 3)
+      else this.burstLeft = Math.round(3 + Math.random() * (dist < 15 ? 8 : 4))
+    }
 
     // tracking error shrinks the longer the bot stays on target
     const t = (now - this.acquiredAt) / 1000
     const err = 0.008 + 0.022 * (1 - this.skill) + this.initErr * Math.exp(-t / 0.75)
     const ex = Math.sin(now * 0.0047 + this.seed) * err
     const ey = Math.cos(now * 0.0039 + this.seed * 1.7) * err * 0.7
-    const w = WEAPONS.rifle
     const yaw = want + ex
     const pitch = Math.atan2(aimY - eye[1], Math.hypot(tgt.pos[0] - eye[0], tgt.pos[2] - eye[2])) + ey
-    let spread = w.spread.hip * (moving ? 1.35 : 0.9) * (this.motor.crouched ? w.spread.crouchMul : 1) * (1.25 - this.skill * 0.5)
+    // automatics are sprayed from the hip; rifles are aimed when the bot stands still
+    const still = w.action === 'auto' ? w.spread.hip * 0.9 : w.spread.hip + (w.spread.ads - w.spread.hip) * 0.7
+    let spread = (moving ? w.spread.hip * 1.35 : still) * (this.motor.crouched ? w.spread.crouchMul : 1) * (1.25 - this.skill * 0.5)
     spread += Math.min(w.spread.bloomMax, (this.burstShots || 0) * w.spread.bloom * 0.6)
     const d = coneDir(yaw, pitch, spread)
-    this.g.fireBot(p, 'rifle', eye, d)
+    this.g.fireBot(p, w.id, eye, d)
 
     this.mag--
     this.burstLeft--
     this.burstShots = (this.burstShots || 0) + 1
     this.nextShotAt = now + 60000 / w.rpm + Math.random() * 15
+    if (w.action === 'semi') this.nextShotAt = Math.max(this.nextShotAt, now + 170 + Math.random() * 200) // trigger finger
+    else if (w.action === 'bolt') this.nextShotAt += Math.random() * 350
     if (this.burstLeft <= 0) {
       this.burstShots = 0
       this.nextShotAt += 220 + Math.random() * (180 + dist * 14)
