@@ -1,6 +1,7 @@
 // Loadout screen: faction, class, primary and sidearm selection with weapon icons and stats.
 // It only ever lists the player's own faction; the server re-validates every request anyway.
 import * as THREE from 'three'
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { TEAMS } from '@shared/constants.js'
 import { WEAPONS, CLASSES, CLASS_IDS, CATEGORY_NAMES, GRENADE, KNIFE, classOptions, sanitizeLoadout, startingAmmo } from '@shared/weapons.js'
 import { buildGun } from './gunmodels.js'
@@ -13,6 +14,7 @@ const FORCES = { allies: 'U.S. Army · British Army', axis: 'Wehrmacht' }
 // ------------------------------------------------------------------ icons: side-on renders of the weapon models
 
 let iconRenderer = null
+let iconEnv = null
 const icons = new Map()
 
 export function iconFor (id) {
@@ -24,8 +26,14 @@ export function iconFor (id) {
       iconRenderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true })
       iconRenderer.setSize(360, 120, false)
       iconRenderer.outputColorSpace = THREE.SRGBColorSpace
+      iconRenderer.toneMapping = THREE.ACESFilmicToneMapping
+      const pmrem = new THREE.PMREMGenerator(iconRenderer)
+      iconEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
+      pmrem.dispose()
     }
     const scene = new THREE.Scene()
+    scene.environment = iconEnv
+    scene.environmentIntensity = 0.6
     scene.add(new THREE.HemisphereLight('#f4efe0', '#4a4438', 2.2))
     const key = new THREE.DirectionalLight('#fff4e0', 2.4)
     key.position.set(1, 1.2, 0.3)
@@ -43,7 +51,7 @@ export function iconFor (id) {
     iconRenderer.setClearColor(0x000000, 0)
     iconRenderer.render(scene, cam)
     url = iconRenderer.domElement.toDataURL('image/png')
-    spec.gun.traverse((o) => { if (o.isMesh) o.geometry.dispose() })
+    spec.gun.traverse((o) => { if (o.isMesh && !o.userData.shared) o.geometry.dispose() })
   } catch (err) {
     console.warn('weapon icon failed', id, err)
   }

@@ -13,6 +13,7 @@ import { createRenderer, createScene, fitSunToBounds, fetchMap, parseMap } from 
 import { loadCars } from './cars.js'
 import { loadCats } from './cats.js'
 import { loadTanks } from './tanks.js'
+import { loadWeaponModels } from './weaponmodels.js'
 import { Input } from './input.js'
 import { LocalPlayer } from './player.js'
 import { WeaponSystem } from './weapons.js'
@@ -771,6 +772,8 @@ async function boot () {
   const progress = (p, label) => { fill.style.width = `${Math.round(p * 100)}%`; if (label) text.textContent = label }
   try {
     progress(0.05, 'Initialising physics…')
+    const weaponModels = loadWeaponModels('/assets/weapons/weapons.glb')
+      .catch((err) => console.warn('weapon models unavailable, using procedural ones', err))
     await RAPIER.init()
     progress(0.1, 'Loading map…')
     const buffer = await fetchMap('/assets/maps/parking_lot.glb', (p) => progress(0.1 + p * 0.75))
@@ -788,6 +791,8 @@ async function boot () {
     cats = await loadCats('/assets/cats/cats.glb', scene, audio)
     progress(0.97, 'Fuelling the tanks…')
     tanks = await loadTanks(scene, RAPIER, world)
+    progress(0.99, 'Arming…')
+    await weaponModels // before anything builds a weapon, grenade or knife
     fitSunToBounds(sun, mapData.bounds)
     player = new LocalPlayer(RAPIER, world)
     grenades = new Grenades(scene, RAPIER, world)
@@ -845,7 +850,7 @@ function frame () {
   cars?.update(camera.position, dt)
   renderer.clear()
   renderer.render(scene, camera)
-  if (G.state === 'playing' && player?.alive && !G.driving) viewmodel.render(renderer, 58 - (BASE_FOV - fovCurrent) * 0.35)
+  if (G.state === 'playing' && player?.alive && !G.driving) viewmodel.render(renderer, 58 - (BASE_FOV - fovCurrent) * 0.35, scene, camera)
   if (G.trace) G.trace.push([now, camera.position.x, camera.position.y, camera.position.z])
   input.endFrame()
 }
@@ -1214,6 +1219,8 @@ function updateObjectives (now, live, acting, extra = '') {
 // debug/verification hook (read-only snapshot of game state)
 window.__labin = {
   viewmodel: (v) => { viewmodel.visible = !!v },
+  // test helper: which first-person models are built, and whether they come from weapons.glb
+  viewmodels: () => Object.fromEntries(Object.entries(viewmodel.models).map(([id, m]) => [id, !!m.modelled])),
   // test helper: pin the menu camera at pos looking at look (null restores the orbit)
   cam: (pos, look) => { camOverride = pos ? { pos, look } : null },
   // test helper: start (true) / stop and return (false) the per-frame camera trace

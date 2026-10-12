@@ -1,0 +1,25 @@
+{
+ "title": "File:Remington Rand M1911A1 revers (6825681426).jpg",
+ "page": "https://commons.wikimedia.org/wiki/File:Remington_Rand_M1911A1_revers_(6825681426).jpg",
+ "license": "CC BY 2.0",
+ "artist": "Askild Antonsen (flickr handvapensamlingen)",
+ "length_mm": 216,
+ "cal": {
+  "muzzle": [
+   1885,
+   207
+  ],
+  "axis": [
+   1000,
+   207
+  ],
+  "origin": [
+   845,
+   540
+  ],
+  "rear": [
+   110,
+   430
+  ]
+ }
+}

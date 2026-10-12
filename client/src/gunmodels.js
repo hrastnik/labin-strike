@@ -2,6 +2,7 @@
 // Units are metres; the bore points down -Z, +Y is up. Each builder returns the gun group plus the animated parts
 // and anchor points the viewmodel needs (muzzle, sight height, hand positions, magazine, bolt, feed cover...).
 import * as THREE from 'three'
+import { applyWeaponModel, modelClone } from './weaponmodels.js'
 
 function mat (color, opts = {}) {
   return new THREE.MeshStandardMaterial({ color, roughness: 0.72, metalness: 0.0, flatShading: true, ...opts })
@@ -616,7 +617,7 @@ function beltMG ({ us }) {
 function pistolSpec (gun, extra) {
   return {
     kind: 'pistol',
-    hip: V(0.13, -0.16, -0.42),
+    hip: V(0.12, -0.135, -0.42),
     kick: { z: 0.045, rot: 0.11 },
     reloadRoll: 0.35,
     magDir: [0, -1, 0],
@@ -743,11 +744,14 @@ const BUILDERS = {
   webley
 }
 
-// fresh meshes every call (geometries are not shared, materials are)
+// Fresh procedural meshes every call (geometries are not shared, materials are); when weapons.glb has a model for
+// this id its parts replace them (those share geometry, flagged userData.shared) and the procedural spec only
+// supplies the gameplay metadata.
 export function buildGun (id) {
   const b = BUILDERS[id] || BUILDERS.stg44
   const spec = b()
   spec.id = id
+  applyWeaponModel(id, spec)
   spec.magRest = spec.mag.position.clone()
   return spec
 }
@@ -828,6 +832,12 @@ export function buildViewmodel (id, sleeveColor) {
 // stick grenade standing on +Y: wooden handle below, charge head on top; origin near the balance point
 export function buildGrenade () {
   const g = new THREE.Group()
+  const m = modelClone('stielhandgranate')
+  if (m) {
+    m.rotation.x = Math.PI / 2 // modelled head-forward (-Z)
+    g.add(m)
+    return g
+  }
   cylY(0.034, 0.1, M.feldgrau, 0, 0.12, 0, g, 10)
   cylY(0.036, 0.012, M.steelLight, 0, 0.068, 0, g, 10)
   cylY(0.014, 0.27, M.wood, 0, -0.07, 0, g, 8)
@@ -869,6 +879,11 @@ function blade (len, width, material, parent) {
 // M3 trench knife (allies) or S84/98 bayonet (axis), blade forward along -Z; origin at the middle of the grip
 export function buildKnife (team) {
   const g = new THREE.Group()
+  const m = modelClone(team === 'axis' ? 'knife_axis' : 'knife_allies')
+  if (m) {
+    g.add(m)
+    return g
+  }
   if (team === 'axis') {
     blade(0.25, 0.024, M.steelLight, g).position.z = -0.062
     box(0.016, 0.04, 0.012, M.steel, 0, 0.004, -0.058, g) // crossguard

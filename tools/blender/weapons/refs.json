@@ -1,0 +1,209 @@
+{
+ "stg44": {
+  "title": "File:Sturmgewehr44 noBG(1).jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Sturmgewehr44_noBG(1).jpg",
+  "license": "CC BY-SA 4.0",
+  "length_mm": 940,
+  "cal": {
+   "muzzle": [
+    36,
+    192
+   ],
+   "axis": [
+    340,
+    193
+   ],
+   "origin": [
+    1190,
+    340
+   ],
+   "rear": [
+    1935,
+    200
+   ]
+  }
+ },
+ "kar98k": {
+  "title": "File:Kar 98K noBG.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Kar_98K_noBG.jpg",
+  "license": "CC BY-SA 4.0",
+  "length_mm": 1110,
+  "cal": null
+ },
+ "mp40": {
+  "title": "File:MP 40 AYF 2.JPG",
+  "page": "https://commons.wikimedia.org/wiki/File:MP_40_AYF_2.JPG",
+  "license": "CC BY-SA 3.0",
+  "length_mm": 833,
+  "cal": null
+ },
+ "mg42": {
+  "title": "File:MG42 1 noBG.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:MG42_1_noBG.jpg",
+  "license": "CC BY-SA 4.0",
+  "length_mm": 1220,
+  "cal": null
+ },
+ "fg42": {
+  "title": "File:Fallschirmjaegergewehr 42 noBG.png",
+  "page": "https://commons.wikimedia.org/wiki/File:Fallschirmjaegergewehr_42_noBG.png",
+  "license": "CC BY-SA 4.0",
+  "length_mm": 975,
+  "cal": null
+ },
+ "g43": {
+  "title": "File:Gewehr 43 noBG.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Gewehr_43_noBG.jpg",
+  "license": "CC BY-SA 4.0",
+  "length_mm": 1130,
+  "cal": null
+ },
+ "p38": {
+  "title": "File:Walther P38 cutaway noBG.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Walther_P38_cutaway_noBG.jpg",
+  "license": "CC BY-SA 4.0",
+  "length_mm": 216,
+  "cal": null
+ },
+ "luger": {
+  "title": "File:Luger IMG 6768-retouched.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Luger_IMG_6768-retouched.jpg",
+  "license": "CC BY-SA 2.0 fr",
+  "length_mm": 222,
+  "cal": null
+ },
+ "m1garand": {
+  "title": "File:M1 Garand rifle USA noBg cropped.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:M1_Garand_rifle_USA_noBg_cropped.jpg",
+  "license": "CC BY-SA 4.0",
+  "length_mm": 1100,
+  "cal": null
+ },
+ "thompson": {
+  "title": "File:ThompsonM1A1VWM.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:ThompsonM1A1VWM.jpg",
+  "license": "Public domain",
+  "length_mm": 811,
+  "cal": null
+ },
+ "m3": {
+  "title": "File:M3GreasegunVWM.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:M3GreasegunVWM.jpg",
+  "license": "Public domain",
+  "length_mm": 757,
+  "cal": null
+ },
+ "bar": {
+  "title": "File:Army Heritage Museum B.A.R..jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Army_Heritage_Museum_B.A.R..jpg",
+  "license": "Public domain",
+  "length_mm": 1214,
+  "cal": null,
+  "artist": "United States Army"
+ },
+ "m1919a6": {
+  "title": "File:Browning-M1919A6-machine-gun-batey-haosef-1.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Browning-M1919A6-machine-gun-batey-haosef-1.jpg",
+  "license": "CC BY 4.0",
+  "length_mm": 1346,
+  "cal": null,
+  "artist": "<a href=\"//commons.wikimedia.org/wiki/User:Bukvoed\" title=\"User:Bukvoed\">Bukvoed</a>"
+ },
+ "m1919": {
+  "title": "File:Browning M1919 tank machine gun.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Browning_M1919_tank_machine_gun.jpg",
+  "license": "Public domain",
+  "length_mm": null,
+  "cal": null,
+  "artist": "War Department. 1789-9/18/1947"
+ },
+ "m1903": {
+  "title": "File:Springfield 1903.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Springfield_1903.jpg",
+  "license": "Public domain",
+  "length_mm": 1098,
+  "cal": null
+ },
+ "m1903a4": {
+  "title": "File:M1903 A4 Springfield-Rifle Illu Sniperversion.png",
+  "page": "https://commons.wikimedia.org/wiki/File:M1903_A4_Springfield-Rifle_Illu_Sniperversion.png",
+  "license": "CC BY-SA 3.0",
+  "length_mm": 1098,
+  "cal": null
+ },
+ "m1carbine": {
+  "title": "File:M1 Carbine Mk I - USA - Armémuseum noBG croped.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:M1_Carbine_Mk_I_-_USA_-_Arm%C3%A9museum_noBG_croped.jpg",
+  "license": "CC BY-SA 4.0",
+  "length_mm": 904,
+  "cal": null
+ },
+ "sten": {
+  "title": "File:STEN MK II submachinegun.png",
+  "page": "https://commons.wikimedia.org/wiki/File:STEN_MK_II_submachinegun.png",
+  "license": "Public domain",
+  "length_mm": 762,
+  "cal": null
+ },
+ "bren": {
+  "title": "File:Cutaway drawing of Bren gun.png",
+  "page": "https://commons.wikimedia.org/wiki/File:Cutaway_drawing_of_Bren_gun.png",
+  "license": "Public domain",
+  "length_mm": 1156,
+  "cal": null
+ },
+ "bren_photo": {
+  "title": "File:BREN GM MK II 1971 Bangladesh Liberation War Arms.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:BREN_GM_MK_II_1971_Bangladesh_Liberation_War_Arms.jpg",
+  "license": "CC BY-SA 4.0",
+  "length_mm": 1156,
+  "cal": null,
+  "artist": "<a href=\"//commons.wikimedia.org/wiki/User:Aashaa\" title=\"User:Aashaa\">Aashaa</a>"
+ },
+ "lee_enfield": {
+  "title": "File:Lee-Enfield No 4 Mk I (1943) - AM.032027 noBG.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Lee-Enfield_No_4_Mk_I_(1943)_-_AM.032027_noBG.jpg",
+  "license": "CC BY-SA 4.0",
+  "length_mm": 1129,
+  "cal": null
+ },
+ "m1911": {
+  "title": "File:Colt M1911 (6971799429) noBG.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Colt_M1911_(6971799429)_noBG.jpg",
+  "license": "CC BY-SA 3.0",
+  "length_mm": 216,
+  "cal": null
+ },
+ "webley": {
+  "title": "File:Webley-Mk-VI-p1030100 noBG.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Webley-Mk-VI-p1030100_noBG.jpg",
+  "license": "CC BY-SA 3.0",
+  "length_mm": 286,
+  "cal": null,
+  "artist": "<a class=\"external free\" href=\"https://commons.wikimedia.org/wiki/User:Rama\">https://commons.wikimedia.org/wiki/User:Rama</a>"
+ },
+ "stielhandgranate": {
+  "title": "File:Stielhandgranate Deutschlandmuseum Berlin, CC BY-SA 4.0.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Stielhandgranate_Deutschlandmuseum_Berlin,_CC_BY-SA_4.0.jpg",
+  "license": "CC BY-SA 4.0",
+  "length_mm": 365,
+  "cal": null,
+  "artist": "Deutschlandmuseum Berlin"
+ },
+ "knife_axis": {
+  "title": "File:Bayonet and scabbard and frog (AM 696924-5).jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Bayonet_and_scabbard_and_frog_(AM_696924-5).jpg",
+  "license": "CC BY 4.0",
+  "length_mm": 385,
+  "cal": null,
+  "artist": "<div class=\"fn value\">\nWeyersberg, Kirschbaum &amp; Cie</div>"
+ },
+ "knife_allies": {
+  "title": "File:M3 knife.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:M3_knife.jpg",
+  "license": "CC BY-SA 4.0",
+  "length_mm": 292,
+  "cal": null,
+  "artist": "<a href=\"//commons.wikimedia.org/w/index.php?title=User:Eytancal&amp;action=edit&amp;redlink=1\" class=\"new\" title=\"User:Eytancal (page does not exist)\">Eytancal</a>"
+ }
+}

@@ -1,0 +1,25 @@
+{
+ "title": "File:Webley Mk VI-Morges Inv 1010650-P5120348-white.jpg",
+ "page": "https://commons.wikimedia.org/wiki/File:Webley_Mk_VI-Morges_Inv_1010650-P5120348-white.jpg",
+ "license": "CC BY-SA 3.0 fr",
+ "artist": "Rama",
+ "length_mm": 286,
+ "cal": {
+  "muzzle": [
+   1775,
+   310
+  ],
+  "axis": [
+   1200,
+   310
+  ],
+  "origin": [
+   803,
+   700
+  ],
+  "rear": [
+   135,
+   1020
+  ]
+ }
+}

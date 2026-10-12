@@ -3,6 +3,9 @@ import * as THREE from 'three'
 import { WEAPONS, GRENADE, KNIFE } from '@shared/weapons.js'
 import { M, buildViewmodel, buildGrenadeViewmodel, buildKnifeViewmodel } from './gunmodels.js'
 
+const _m = new THREE.Matrix4()
+const _m2 = new THREE.Matrix4()
+const _q = new THREE.Quaternion()
 const UNIFORM = { allies: '#5d6638', axis: '#5a6260' }
 
 const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
@@ -144,8 +147,9 @@ export class Viewmodel {
     const sh = this.shells[this.shellIdx++ % this.shells.length]
     m.gun.updateMatrixWorld(true)
     sh.mesh.position.copy(m.ejectPort).applyMatrix4(m.gun.matrixWorld)
-    if (m.ejectDown) sh.v.set(0.1 + Math.random() * 0.2, -0.6 - Math.random() * 0.3, 0)
-    else sh.v.set(0.7 + Math.random() * 0.3, 0.55 + Math.random() * 0.3, -0.1)
+    const side = m.ejectPort.x < -0.003 ? -1 : 1   // a port on the left (P38) throws cases to the left
+    if (m.ejectDown) sh.v.set(side * (0.1 + Math.random() * 0.2), -0.6 - Math.random() * 0.3, 0)
+    else sh.v.set(side * (0.7 + Math.random() * 0.3), 0.55 + Math.random() * 0.3, -0.1)
     sh.mesh.rotation.set(Math.random() * 3, Math.random() * 3, 0)
     sh.t = 0.45
     sh.mesh.visible = true
@@ -268,7 +272,8 @@ export class Viewmodel {
         else if (r >= 0.55 && r < 0.75) magOff = 1 - (r - 0.55) / 0.2
         offset(magOff)
         m.mag.visible = magOff < 0.98 && !(m.magHidden && r < 0.4)
-        if (m.parts.breakTop) m.parts.breakTop.rotation.x = 0.7 * smooth(0.05, 0.18, r) * (1 - smooth(0.78, 0.9, r))
+        // break-open revolver: barrel + cylinder tip muzzle-down about the hinge, the grip stays in the hand
+        if (m.parts.breakTop) m.parts.breakTop.rotation.x = -0.7 * smooth(0.05, 0.18, r) * (1 - smooth(0.78, 0.9, r))
       } else if (style === 'enbloc') {
         // press a full clip down into the open action, then let the bolt slam home
         const k = 1 - smooth(0.3, 0.6, r)
@@ -374,8 +379,17 @@ export class Viewmodel {
     root.rotation.set(mix(r0, r1, 0), mix(r0, r1, 1), mix(r0, r1, 2))
   }
 
-  render (renderer, fov) {
+  // `world`/`worldCamera`: the main scene's sky light is reused, rotated so reflections stay fixed to the world
+  render (renderer, fov, world, worldCamera) {
     if (!this.holder.visible) return
+    if (world?.environment) {
+      const sc = this.scene
+      sc.environment = world.environment
+      sc.environmentIntensity = world.environmentIntensity
+      _m.makeRotationFromEuler(world.environmentRotation)
+      _q.copy(worldCamera.quaternion).invert()
+      sc.environmentRotation.setFromRotationMatrix(_m.premultiply(_m2.makeRotationFromQuaternion(_q)))
+    }
     this.camera.fov = fov
     this.camera.updateProjectionMatrix()
     renderer.clearDepth()

@@ -8,3 +8,5 @@ server.log
 *.blend1
 __pycache__/
 *.pyc
+tools/blender/weapons/ref/
+tools/blender/weapons/tex/

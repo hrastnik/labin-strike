@@ -27,9 +27,15 @@ function gunTemplate (id) {
   let t = gunTemplates.get(id)
   if (!t) {
     const spec = buildGun(id)
-    spec.gun.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.userData.shared = true } })
-    spec.mag.visible = !spec.magHidden
-    t = { gun: spec.gun, muzzle: spec.muzzle.clone(), pistol: spec.kind === 'pistol' }
+    let gun = spec.gun
+    if (spec.lod) {
+      gun = new THREE.Group()
+      gun.add(spec.lod.clone())
+    } else {
+      spec.mag.visible = !spec.magHidden
+    }
+    gun.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.userData.shared = true } })
+    t = { gun, muzzle: spec.muzzle.clone(), pistol: spec.kind === 'pistol' }
     gunTemplates.set(id, t)
   }
   return t

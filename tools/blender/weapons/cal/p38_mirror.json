@@ -1,0 +1,25 @@
+{
+ "title": "File:Walther P38 1943 Whermacht.jpg",
+ "page": "https://commons.wikimedia.org/wiki/File:Walther_P38_1943_Whermacht.jpg",
+ "license": "CC BY-SA 4.0",
+ "length_mm": 216,
+ "mirrored": true,
+ "cal": {
+  "muzzle": [
+   1781,
+   220
+  ],
+  "axis": [
+   1350,
+   222.5
+  ],
+  "origin": [
+   850,
+   520
+  ],
+  "rear": [
+   140,
+   400
+  ]
+ }
+}

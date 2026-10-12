@@ -1,0 +1,24 @@
+{
+ "title": "File:Springfield Model 1903 Bolt Action Rifle-NMAH-JN2016-02641.jpg",
+ "page": "https://commons.wikimedia.org/wiki/File:Springfield_Model_1903_Bolt_Action_Rifle-NMAH-JN2016-02641.jpg",
+ "license": "Public domain (Smithsonian NMAH)",
+ "length_mm": 1098,
+ "cal": {
+  "muzzle": [
+   1890,
+   348.8
+  ],
+  "axis": [
+   560,
+   332.4
+  ],
+  "origin": [
+   595,
+   437
+  ],
+  "rear": [
+   51,
+   425
+  ]
+ }
+}
