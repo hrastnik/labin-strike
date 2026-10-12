@@ -52,9 +52,13 @@ else
 fi
 chmod +x server.sh
 ./server.sh restart
-sleep 1
+# the server bakes the map before it listens, so give it a few seconds to come up
+for _ in $(seq 1 20); do
+  curl -fsS "http://127.0.0.1:7344/healthz" 2>/dev/null && echo && break
+  sleep 0.5
+done
 ./server.sh status
-curl -fsS "http://127.0.0.1:7344/healthz" && echo
+curl -fsS "http://127.0.0.1:7344/healthz" >/dev/null
 REMOTE
 
 step "Deployed: http://${DEPLOY_HOST}:7344"
