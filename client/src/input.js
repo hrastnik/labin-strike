@@ -10,6 +10,7 @@ export class Input {
     this.sensitivity = 1
     this.onLockChange = null
     this.enabled = false
+    this.fullscreen = false
 
     window.addEventListener('keydown', (e) => {
       if (!this.enabled) return
@@ -60,9 +61,23 @@ export class Input {
     } catch {
       plain()
     }
+    // after the pointer lock request: entering fullscreen uses up the click's user activation
+    this.enterFullscreen()
   }
 
   unlock () { if (document.pointerLockElement) document.exitPointerLock() }
+
+  enterFullscreen () {
+    if (!this.fullscreen || document.fullscreenElement || !document.fullscreenEnabled) return
+    // while fullscreen, Chromium hands every W combo (Ctrl+W included) to the page instead of closing the tab
+    navigator.keyboard?.lock?.(['KeyW']).catch(() => {})
+    document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {})
+  }
+
+  exitFullscreen () {
+    navigator.keyboard?.unlock?.()
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+  }
 
   down (code) { return this.keys.has(code) }
   wasPressed (code) { return this.pressed.has(code) }

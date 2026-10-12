@@ -121,6 +121,14 @@ qualityInput.addEventListener('change', () => {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, highQuality ? 2 : 1.25))
   resize()
 })
+const fullscreenInput = $('fullscreen-input')
+fullscreenInput.checked = input.fullscreen = store.get('fullscreen', '0') === '1'
+if (navigator.keyboard?.lock) $('fullscreen-hint').textContent = '(Ctrl+W won’t close the tab)'
+fullscreenInput.addEventListener('change', () => {
+  input.fullscreen = fullscreenInput.checked
+  store.set('fullscreen', input.fullscreen ? '1' : '0')
+  if (!input.fullscreen) input.exitFullscreen()
+})
 // side preference on the main menu (the server still balances humans)
 let teamPref = ['allies', 'axis'].includes(params.get('team')) ? params.get('team') : store.get('team', 'auto')
 const prefButtons = document.querySelectorAll('#team-pref button')
@@ -160,6 +168,7 @@ async function deploy () {
   const name = nameInput.value.trim() || `Soldier${Math.floor(Math.random() * 900 + 100)}`
   store.set('name', name)
   audio.unlock()
+  input.enterFullscreen()
   G.state = 'connecting'
   deployBtn.disabled = true
   deployBtn.textContent = 'Connecting…'
@@ -233,6 +242,7 @@ function leave (msg) {
   G.deployed = false
   net.close()
   input.unlock()
+  input.exitFullscreen()
   input.enabled = false
   G.state = 'menu'
   G.myId = 0
@@ -247,6 +257,14 @@ function leave (msg) {
   deployBtn.textContent = 'Deploy'
   setStatus(msg || '')
 }
+
+// browsers never let a page cancel Ctrl+W, but they do ask before closing a tab mid-match
+// (Ctrl is crouch, so the combo is one stray finger away)
+window.addEventListener('beforeunload', (e) => {
+  if (G.state !== 'playing') return
+  e.preventDefault()
+  e.returnValue = ''
+})
 
 input.onLockChange = (locked, error) => {
   if (G.state !== 'playing' || loadoutMenu.isOpen) return
