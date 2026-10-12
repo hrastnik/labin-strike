@@ -9,6 +9,7 @@ import { buildMapWorld, rayMap, lineOfSight } from '@shared/physics.js'
 import { rayVsPlayer, knifeReach } from '@shared/hitbox.js'
 import { createRenderer, createScene, fitSunToBounds, fetchMap, parseMap } from './renderer.js'
 import { loadCars } from './cars.js'
+import { loadCats } from './cats.js'
 import { Input } from './input.js'
 import { LocalPlayer } from './player.js'
 import { WeaponSystem } from './weapons.js'
@@ -82,6 +83,7 @@ let mapData = null
 let player = null
 let grenades = null
 let cars = null
+let cats = null
 
 function resize () {
   const w = window.innerWidth; const h = window.innerHeight
@@ -248,6 +250,7 @@ function leave (msg) {
   G.myId = 0
   if (player) player.alive = false
   avatars.clear()
+  cats?.clear()
   grenades?.clear()
   drops.clear()
   G.roster.clear()
@@ -361,6 +364,7 @@ net.on('tp', (d) => {
 net.on('snap', (s) => {
   if (G.state !== 'playing') return
   avatars.onSnapshot(s, G.myId, G.roster, G.team)
+  cats?.onSnapshot(s.t, s.c)
   G.aliveIds.clear()
   for (const e of s.p) {
     if (e[6] & 1) G.aliveIds.add(e[0])
@@ -627,6 +631,8 @@ async function boot () {
       cars = await loadCars('/assets/cars/cars.glb', mapRoot.userData.cars, renderer)
       scene.add(cars)
     }
+    progress(0.95, 'Letting the cats out…')
+    cats = await loadCats('/assets/cats/cats.glb', scene, audio)
     fitSunToBounds(sun, mapData.bounds)
     player = new LocalPlayer(RAPIER, world)
     grenades = new Grenades(scene, RAPIER, world)
@@ -675,6 +681,7 @@ function frame () {
 
   effects.update(dt)
   drops.update()
+  if (G.state === 'playing') cats?.update(dt, avatars.renderTime(INTERP_DELAY), camera.position)
   grenades?.update(dt, (pos, impact) => audio.nadeBounce(pos, Math.min(1, impact / 10)))
   cars?.update(camera.position, dt)
   renderer.clear()
@@ -895,6 +902,7 @@ window.__labin = {
     grenadesInFlight: grenades?.live.size,
     drops: [...drops.live].map(([id, d]) => ({ id, pos: d.mesh.position.toArray().map(r2) })),
     knifing: weapons.knifing,
+    cats: cats ? [...cats.map].map(([id, c]) => ({ id, state: c.state, pos: c.pos.toArray().map(r2) })) : [],
     sprinting: player?.sprinting,
     speed: player?.speed,
     loadout: G.loadout,

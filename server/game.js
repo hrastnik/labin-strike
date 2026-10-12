@@ -13,6 +13,7 @@ import { NADE_DT, createGrenade, stepGrenade } from '../shared/grenade.js'
 import { rayVsPlayer, knifeReach } from '../shared/hitbox.js'
 import { NavGrid } from './navgrid.js'
 import { Bot } from './bot.js'
+import { Cats, CAT } from './cats.js'
 
 const TEAM_IDS = ['allies', 'axis']
 const r2 = (v) => Math.round(v * 100) / 100
@@ -48,6 +49,7 @@ export class Game {
     this.nav = new NavGrid(RAPIER, this.world, this.map.bounds, seeds)
     console.log(`[game] map loaded: ${this.map.colliders.length} colliders, nav ${this.nav.w}x${this.nav.h} ` +
       `(${this.nav.walkableCount} walkable) baked in ${Date.now() - t0}ms`)
+    this.cats = new Cats(this)
 
     this.match = { state: 'playing', scores: { allies: 0, axis: 0 }, endsAt: this.now() + MATCH.timeLimit * 1000, restartAt: 0, winner: null }
     this.io.onConnection((ch) => this.onConnection(ch))
@@ -376,6 +378,7 @@ export class Game {
     const o = msg.o; const e = msg.e
     if (!validVec(o) || !validVec(e)) return
     this.emitOthers(p, 'shot', { id: p.id, w: msg.w, o: o.map(r2), e: e.map(r2) })
+    this.cats.hearShot(o, e)
     for (const q of this.players.values()) if (q.isBot && q.team !== p.team) q.bot.hear(p)
 
     const hit = msg.hit
@@ -456,6 +459,7 @@ export class Game {
 
   explode (g) {
     this.emitAll('boom', { id: g.owner, k: g.k, p: g.pos.map(r2) }, true)
+    this.cats.scare(g.pos, CAT.blastRadius)
     const thrower = this.players.get(g.owner)
     if (!thrower || this.match.state !== 'playing') return
     const c = [g.pos[0], g.pos[1] + 0.2, g.pos[2]]
@@ -488,6 +492,7 @@ export class Game {
     const e = [o[0] + d[0] * maxT, o[1] + d[1] * maxT, o[2] + d[2] * maxT]
     p.firedAt = this.now()
     this.emitAll('shot', { id: p.id, w: weapon, o: o.map(r2), e: e.map(r2), n: victim ? 0 : 1 })
+    this.cats.hearShot(o, e)
     for (const q of this.players.values()) if (q.isBot && q.team !== p.team && q !== p) q.bot.hear(p)
     if (victim && this.match.state === 'playing') this.applyDamage(victim, p, damageFor(weapon, maxT, zone), weapon, zone)
   }
@@ -592,8 +597,9 @@ export class Game {
     }
     this.updateGrenades(dt, now)
     this.updateDrops(now)
-    // with nobody connected the bots idle instead of burning CPU
+    // with nobody connected the bots (and cats) idle instead of burning CPU
     const anyHumans = this.humans().length > 0
+    if (anyHumans) this.cats.update(dt, now)
     for (const p of this.players.values()) {
       if (!p.alive) {
         if (p.respawnAt && now >= p.respawnAt && m.state === 'playing' && p.deployed) this.spawn(p)
@@ -627,7 +633,7 @@ export class Game {
       const weapon = WEAPON_CODE[p.slot === 1 ? p.loadout.secondary : p.loadout.primary]
       list.push([p.id, r2(p.pos[0]), r2(p.pos[1]), r2(p.pos[2]), r3(p.yaw), r3(p.pitch), flags, weapon, Math.round(p.hp), p.life, age])
     }
-    this.emitAll('snap', { t: now, p: list })
+    this.emitAll('snap', { t: now, p: list, c: this.cats.snapshot() })
   }
 
   roster () {
