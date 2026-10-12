@@ -155,6 +155,7 @@ deployBtn.addEventListener('click', () => deploy())
 $('pause').addEventListener('click', () => { if (G.state === 'playing') input.lock() })
 $('btn-loadout').addEventListener('click', (e) => { e.stopPropagation(); openLoadout() })
 $('btn-leave').addEventListener('click', (e) => { e.stopPropagation(); leave('Left the match') })
+$('btn-bots').addEventListener('click', (e) => { e.stopPropagation(); net.emit('bots', { on: !G.match.bots }, true) })
 canvas.addEventListener('click', () => { if (G.state === 'playing' && !input.locked) input.lock() })
 
 function setStatus (text, error = false) {
@@ -385,6 +386,7 @@ function setRoster (players, match) {
   if (me) G.myPing = me.ping
   const prev = G.match.state
   G.match = match
+  $('btn-bots').textContent = `Bots: ${match.bots ? 'on' : 'off'}`
   G.matchEndsLocal = performance.now() + match.timeLeft * 1000
   if (prev === 'playing' && match.state === 'ended') {
     const txt = match.winner === 'draw' ? 'DRAW' : match.winner === G.team ? 'VICTORY' : 'DEFEAT'

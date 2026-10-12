@@ -32,6 +32,7 @@ export class Game {
     this.nextId = 1
     this.startedAt = Date.now()
     this.botNames = [...BOT_NAMES].sort(() => Math.random() - 0.5)
+    this.botsEnabled = true
   }
 
   now () { return Date.now() - this.startedAt }
@@ -83,6 +84,7 @@ export class Game {
     channel.on('knife', (data) => { const p = channel.player; if (p) this.handleKnife(p, data) })
     channel.on('loadout', (data) => { const p = channel.player; if (p) this.handleLoadout(p, data) })
     channel.on('team', (data) => { const p = channel.player; if (p) this.handleTeam(p, data) })
+    channel.on('bots', (data) => { const p = channel.player; if (p) this.handleBots(p, data) })
     channel.on('pong', (data) => { const p = channel.player; if (p && data && typeof data.t === 'number') p.ping = Math.max(0, this.now() - data.t) })
     channel.on('chat', (data) => {
       const p = channel.player
@@ -199,7 +201,7 @@ export class Game {
       const members = [...this.players.values()].filter((p) => p.team === team)
       const humans = members.filter((p) => !p.isBot).length
       const bots = members.filter((p) => p.isBot)
-      const want = Math.max(0, perTeam - humans)
+      const want = this.botsEnabled ? Math.max(0, perTeam - humans) : 0
       for (let i = bots.length; i < want; i++) {
         const name = this.botNames.shift() || `Bot ${this.nextId}`
         const b = this.createPlayer({ name, team, isBot: true })
@@ -328,6 +330,19 @@ export class Game {
     p.channel.emit('team', { team, loadout: p.loadout }, { reliable: true })
     this.broadcastRoster()
     this.emitAll('notice', { m: `${p.name} switched to the ${team === 'allies' ? 'Allies' : 'Axis'}` }, true)
+  }
+
+  // any player can switch the bots for the whole server
+  handleBots (p, data) {
+    const now = this.now()
+    if (typeof data?.on !== 'boolean' || data.on === this.botsEnabled) return
+    if (now - (p.lastBotToggle ?? -Infinity) < MATCH.botToggleCooldown * 1000) return
+    p.lastBotToggle = now
+    this.botsEnabled = data.on
+    console.log(`[game] ${p.name} turned bots ${data.on ? 'on' : 'off'}`)
+    this.balanceBots()
+    this.broadcastRoster()
+    this.emitAll('notice', { m: `${p.name} turned bots ${data.on ? 'on' : 'off'}` }, true)
   }
 
   // ------------------------------------------------------------------ client messages
@@ -674,6 +689,7 @@ export class Game {
       scores: m.scores,
       winner: m.winner,
       scoreLimit: MATCH.scoreLimit,
+      bots: this.botsEnabled,
       timeLeft: Math.max(0, Math.round(((m.state === 'playing' ? m.endsAt : m.restartAt) - this.now()) / 1000))
     }
   }
