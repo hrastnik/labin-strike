@@ -2,9 +2,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import RAPIER from '@dimforge/rapier3d-compat'
+import { TICK_RATE, SNAPSHOT_RATE, MATCH, PLAYER, BOT_NAMES } from '../shared/constants.js'
 import {
-  TICK_RATE, SNAPSHOT_RATE, MATCH, PLAYER, WEAPONS, WEAPON_IDS, damageFor, BOT_NAMES
-} from '../shared/constants.js'
+  WEAPONS, WEAPON_CODE, CLASS_IDS, CLASSES, damageFor, canUse, sanitizeLoadout, isValidLoadout, startingAmmo
+} from '../shared/weapons.js'
 import { parseGlbJson, extractMapData } from '../shared/mapdata.js'
 import { buildMapWorld, rayMap } from '../shared/physics.js'
 import { rayVsPlayer } from '../shared/hitbox.js'
@@ -68,6 +69,8 @@ export class Game {
     channel.on('join', (data) => this.join(channel, data))
     channel.on('st', (data) => { const p = channel.player; if (p) this.handleState(p, data) })
     channel.on('fire', (data) => { const p = channel.player; if (p) this.handleFire(p, data) })
+    channel.on('loadout', (data) => { const p = channel.player; if (p) this.handleLoadout(p, data) })
+    channel.on('team', (data) => { const p = channel.player; if (p) this.handleTeam(p, data) })
     channel.on('pong', (data) => { const p = channel.player; if (p && data && typeof data.t === 'number') p.ping = Math.max(0, this.now() - data.t) })
     channel.on('chat', (data) => {
       const p = channel.player
@@ -82,20 +85,22 @@ export class Game {
     const name = String(data?.name || 'Soldier').replace(/[^\p{L}\p{N} ._\-]/gu, '').trim().slice(0, 16) || 'Soldier'
     // the first human into an empty server gets a fresh round rather than a half-played bot match
     if (!this.humans().length) this.restartMatch()
-    const team = this.chooseTeam()
+    // a requested team is honoured unless it would stack the humans; otherwise auto-balance
+    const team = TEAM_IDS.includes(data?.team) && this.teamAllowed(data.team) ? data.team : this.chooseTeam()
     const p = this.createPlayer({ name, team, isBot: false, channel })
+    p.loadout = sanitizeLoadout(team, data?.loadout)
     channel.player = p
     console.log(`[game] ${name} joined ${team} (${p.id})`)
     this.balanceBots()
-    this.spawn(p)
+    // humans pick (or confirm) a loadout before their first spawn: see handleLoadout
     channel.emit('welcome', {
       id: p.id,
       team,
+      loadout: p.loadout,
       roster: this.roster(),
       match: this.matchInfo(),
       tick: TICK_RATE,
-      snap: SNAPSHOT_RATE,
-      spawn: { life: p.life, pos: p.pos, yaw: p.yaw }
+      snap: SNAPSHOT_RATE
     }, { reliable: true })
     this.broadcastRoster()
     this.emitAll('notice', { m: `${name} joined the ${team === 'allies' ? 'Allies' : 'Axis'}` }, true)
@@ -121,6 +126,14 @@ export class Game {
     return Math.random() < 0.5 ? 'allies' : 'axis'
   }
 
+  // true if moving one more human onto `team` keeps the human head-count within one of the other team
+  teamAllowed (team, except = null) {
+    const h = { allies: 0, axis: 0 }
+    for (const p of this.players.values()) if (!p.isBot && p !== except) h[p.team]++
+    const other = team === 'allies' ? 'axis' : 'allies'
+    return h[team] <= h[other]
+  }
+
   createPlayer ({ name, team, isBot, channel }) {
     const p = {
       id: this.nextId++,
@@ -136,7 +149,14 @@ export class Game {
       crouch: false,
       ads: false,
       reloading: false,
-      weapon: 0,
+      slot: 0, // 0 = primary, 1 = secondary (which loadout weapon is in hand)
+      loadout: randomLoadout(team), // authoritative: what this life is armed with
+      pendingLoadout: null, // applied at the next spawn
+      ammo: {}, // weapon id -> rounds left this life (magazine + reserve)
+      deployed: isBot, // humans deploy from the loadout screen
+      spawnedAt: 0,
+      lastLoadoutReq: 0,
+      lastTeamSwitch: -1e9,
       hp: PLAYER.maxHealth,
       alive: false,
       life: 0,
@@ -146,7 +166,7 @@ export class Game {
       kills: 0,
       deaths: 0,
       ping: 0,
-      lastFire: { rifle: -1e9, pistol: -1e9 },
+      lastFire: {},
       lastStateAt: 0,
       firedAt: -1e9
     }
@@ -210,10 +230,83 @@ export class Game {
     p.crouch = false
     p.life++
     p.respawnAt = 0
+    p.spawnedAt = this.now()
     p.protectUntil = this.now() + MATCH.spawnProtection * 1000
     p.lastStateAt = this.now()
+    if (p.isBot) p.loadout = randomLoadout(p.team)
+    else if (p.pendingLoadout) { p.loadout = p.pendingLoadout; p.pendingLoadout = null }
+    // last line of defence: whatever path got us here, never spawn with another faction's weapons
+    if (!isValidLoadout(p.team, p.loadout)) p.loadout = sanitizeLoadout(p.team, p.loadout)
+    this.equip(p)
     if (p.isBot) p.bot.onSpawn()
-    else p.channel.emit('spawn', { life: p.life, pos: p.pos, yaw: p.yaw }, { reliable: true })
+    else p.channel.emit('spawn', { life: p.life, pos: p.pos, yaw: p.yaw, loadout: p.loadout }, { reliable: true })
+  }
+
+  equip (p) {
+    const l = p.loadout
+    p.slot = 0
+    p.ammo = {}
+    for (const slot of ['primary', 'secondary']) {
+      const a = startingAmmo(l.cls, l[slot], slot)
+      p.ammo[l[slot]] = a.mag + a.reserve
+    }
+  }
+
+  // ------------------------------------------------------------------ loadouts and teams
+
+  // { cls, primary, secondary, deploy? }: validated against the player's (server-side) team
+  handleLoadout (p, data) {
+    const now = this.now()
+    if (now - p.lastLoadoutReq < 200) return
+    p.lastLoadoutReq = now
+    const req = { cls: data?.cls, primary: data?.primary, secondary: data?.secondary }
+    if (!isValidLoadout(p.team, req)) {
+      p.channel.emit('loadout', { loadout: p.pendingLoadout || p.loadout, applied: 'rejected' }, { reliable: true })
+      return
+    }
+    const l = { cls: req.cls, primary: req.primary, secondary: req.secondary }
+    let applied
+    if (!p.deployed) {
+      p.loadout = l
+      applied = 'spawn'
+      if (data.deploy) {
+        p.deployed = true
+        if (!p.respawnAt) p.respawnAt = now
+      }
+    } else if (p.alive && now - p.spawnedAt < MATCH.loadoutGrace * 1000 && p.firedAt < p.spawnedAt && p.lastDamageAt < p.spawnedAt) {
+      // changed class right after spawning, before getting involved: swap kit on the spot
+      p.loadout = l
+      p.pendingLoadout = null
+      this.equip(p)
+      applied = 'now'
+    } else {
+      p.pendingLoadout = l
+      applied = 'next'
+    }
+    p.channel.emit('loadout', { loadout: l, applied, life: p.life }, { reliable: true })
+  }
+
+  handleTeam (p, data) {
+    const now = this.now()
+    const team = data?.team
+    const deny = (m) => p.channel.emit('team', { team: p.team, loadout: p.pendingLoadout || p.loadout, denied: m }, { reliable: true })
+    if (!TEAM_IDS.includes(team) || team === p.team) return deny('Already on that team')
+    if (now - p.lastTeamSwitch < MATCH.teamSwitchCooldown * 1000) return deny('Wait a moment before switching again')
+    if (!this.teamAllowed(team, p)) return deny('Teams would be unbalanced')
+    p.lastTeamSwitch = now
+    // leaving the field is not a death: no score change, back to the loadout screen
+    p.alive = false
+    p.team = team
+    p.loadout = sanitizeLoadout(team, p.pendingLoadout || p.loadout)
+    p.pendingLoadout = null
+    p.ammo = {}
+    p.deployed = false
+    p.respawnAt = now + MATCH.respawnDelay * 1000
+    console.log(`[game] ${p.name} switched to ${team}`)
+    this.balanceBots()
+    p.channel.emit('team', { team, loadout: p.loadout }, { reliable: true })
+    this.broadcastRoster()
+    this.emitAll('notice', { m: `${p.name} switched to the ${team === 'allies' ? 'Allies' : 'Axis'}` }, true)
   }
 
   // ------------------------------------------------------------------ client messages
@@ -249,17 +342,22 @@ export class Game {
     p.crouch = !!(flags & 2)
     p.ads = !!(flags & 4)
     p.reloading = !!(flags & 8)
-    p.weapon = weapon === 1 ? 1 : 0
+    p.slot = weapon === 1 ? 1 : 0
     p.lastStateAt = now
   }
 
   handleFire (p, msg) {
-    if (!p.alive || !msg || !WEAPONS[msg.w]) return
-    const w = WEAPONS[msg.w]
+    if (!p.alive || !msg) return
+    // only the weapons the server issued for this life, of the player's own faction, with rounds left
+    const id = msg.w
+    if (!canUse(p.team, id) || (id !== p.loadout.primary && id !== p.loadout.secondary)) return
+    if (!(p.ammo[id] > 0)) return
+    const w = WEAPONS[id]
     const now = this.now()
     const minInterval = (60000 / w.rpm) * 0.7
-    if (now - p.lastFire[msg.w] < minInterval) return
-    p.lastFire[msg.w] = now
+    if (now - (p.lastFire[id] ?? -1e9) < minInterval) return
+    p.lastFire[id] = now
+    p.ammo[id]--
     p.firedAt = now
     const o = msg.o; const e = msg.e
     if (!validVec(o) || !validVec(e)) return
@@ -281,7 +379,7 @@ export class Game {
     const block = rayMap(this.RAPIER, this.world, o, d, dist)
     if (block && block.dist < dist - 0.4) return
     const zone = ['head', 'body', 'legs'].includes(hit.zone) ? hit.zone : 'body'
-    this.applyDamage(target, p, damageFor(msg.w, dist, zone), msg.w, zone)
+    this.applyDamage(target, p, damageFor(id, dist, zone), id, zone)
   }
 
   // ------------------------------------------------------------------ combat
@@ -349,7 +447,7 @@ export class Game {
     for (const p of this.players.values()) {
       p.kills = 0
       p.deaths = 0
-      this.spawn(p)
+      if (p.deployed) this.spawn(p)
     }
     this.broadcastRoster()
     this.emitAll('notice', { m: 'New round: Team Deathmatch' }, true)
@@ -368,7 +466,7 @@ export class Game {
     const anyHumans = this.humans().length > 0
     for (const p of this.players.values()) {
       if (!p.alive) {
-        if (p.respawnAt && now >= p.respawnAt && m.state === 'playing') this.spawn(p)
+        if (p.respawnAt && now >= p.respawnAt && m.state === 'playing' && p.deployed) this.spawn(p)
         continue
       }
       if (p.hp < PLAYER.maxHealth && now - p.lastDamageAt > PLAYER.regenDelay * 1000) {
@@ -396,7 +494,8 @@ export class Game {
       const flags = (p.alive ? 1 : 0) | (p.crouch ? 2 : 0) | (p.ads ? 4 : 0) | (p.reloading ? 8 : 0) |
         (now - p.firedAt < 400 ? 16 : 0) | (now < p.protectUntil ? 32 : 0)
       const age = Math.max(0, Math.min(1000, Math.round(now - p.posAt)))
-      list.push([p.id, r2(p.pos[0]), r2(p.pos[1]), r2(p.pos[2]), r3(p.yaw), r3(p.pitch), flags, p.weapon, Math.round(p.hp), p.life, age])
+      const weapon = WEAPON_CODE[p.slot === 1 ? p.loadout.secondary : p.loadout.primary]
+      list.push([p.id, r2(p.pos[0]), r2(p.pos[1]), r2(p.pos[2]), r3(p.yaw), r3(p.pitch), flags, weapon, Math.round(p.hp), p.life, age])
     }
     this.emitAll('snap', { t: now, p: list })
   }
@@ -431,4 +530,10 @@ function validVec (v) {
   return Array.isArray(v) && v.length === 3 && v.every(Number.isFinite)
 }
 
-export { WEAPON_IDS }
+// bots roll a fresh class and weapons from their own faction every life
+function randomLoadout (team) {
+  const cls = CLASS_IDS[Math.floor(Math.random() * CLASS_IDS.length)]
+  const c = CLASSES[cls]
+  const any = (list) => list[Math.floor(Math.random() * list.length)]
+  return { cls, primary: any(c.primary[team]), secondary: any(c.secondary[team]) }
+}

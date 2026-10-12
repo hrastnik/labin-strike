@@ -2,7 +2,8 @@
 import './style.css'
 import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
-import { WEAPONS, WEAPON_IDS, PLAYER, INPUT_RATE, INTERP_DELAY, MATCH, TEAMS } from '@shared/constants.js'
+import { PLAYER, INPUT_RATE, INTERP_DELAY, MATCH, TEAMS } from '@shared/constants.js'
+import { WEAPONS, CLASSES, sanitizeLoadout } from '@shared/weapons.js'
 import { parseGlbJson, extractMapData } from '@shared/mapdata.js'
 import { buildMapWorld, rayMap } from '@shared/physics.js'
 import { rayVsPlayer } from '@shared/hitbox.js'
@@ -17,6 +18,7 @@ import { Effects } from './effects.js'
 import { Audio } from './audio.js'
 import { Hud } from './hud.js'
 import { Net } from './net.js'
+import { LoadoutMenu } from './loadout.js'
 
 const BASE_FOV = 68
 const $ = (id) => document.getElementById(id)
@@ -31,6 +33,10 @@ const G = {
   state: 'loading', // loading | menu | connecting | playing
   myId: 0,
   team: null,
+  deployed: false, // confirmed a loadout since joining / switching sides
+  loadout: null, // what the server armed us with
+  pending: null, // loadout queued for the next spawn
+  firstSpawn: true,
   roster: new Map(),
   match: { state: 'playing', scores: { allies: 0, axis: 0 }, winner: null, scoreLimit: MATCH.scoreLimit, timeLeft: MATCH.timeLimit },
   matchEndsLocal: 0,
@@ -109,9 +115,27 @@ qualityInput.addEventListener('change', () => {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, highQuality ? 2 : 1.25))
   resize()
 })
+// side preference on the main menu (the server still balances humans)
+let teamPref = ['allies', 'axis'].includes(params.get('team')) ? params.get('team') : store.get('team', 'auto')
+const prefButtons = document.querySelectorAll('#team-pref button')
+const showPref = () => prefButtons.forEach((b) => b.classList.toggle('sel', b.dataset.team === teamPref))
+prefButtons.forEach((b) => b.addEventListener('click', () => { teamPref = b.dataset.team; store.set('team', teamPref); showPref() }))
+showPref()
+
+// last loadout chosen for each side (URL params ?cls=&primary=&secondary= override, handy with ?autojoin)
+function savedLoadout (team) {
+  let l = null
+  try { l = JSON.parse(store.get(`loadout.${team}`, 'null')) } catch {}
+  if (params.has('cls') || params.has('primary')) {
+    l = { cls: params.get('cls') || l?.cls, primary: params.get('primary') || l?.primary, secondary: params.get('secondary') || l?.secondary }
+  }
+  return l && sanitizeLoadout(team, l)
+}
+
 nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') deploy() })
 deployBtn.addEventListener('click', () => deploy())
 $('pause').addEventListener('click', () => { if (G.state === 'playing') input.lock() })
+$('btn-loadout').addEventListener('click', (e) => { e.stopPropagation(); openLoadout() })
 $('btn-leave').addEventListener('click', (e) => { e.stopPropagation(); leave('Left the match') })
 canvas.addEventListener('click', () => { if (G.state === 'playing' && !input.locked) input.lock() })
 
@@ -145,11 +169,62 @@ async function deploy () {
     return
   }
   setStatus('Joining match…')
-  net.emit('join', { name }, true)
+  const team = teamPref === 'auto' ? undefined : teamPref
+  net.emit('join', { name, team, loadout: savedLoadout(team || store.get('lastTeam', 'allies')) }, true)
+}
+
+// ------------------------------------------------------------------ loadout
+
+const loadoutMenu = new LoadoutMenu({
+  onDeploy: (l) => requestLoadout(l),
+  onTeam: (team) => { loadoutMenu.status('Switching sides…'); net.emit('team', { team }, true) },
+  onClose: () => closeLoadout()
+})
+
+const loadoutLabel = (l) => `${CLASSES[l.cls].name} · ${WEAPONS[l.primary].name} · ${WEAPONS[l.secondary].name}`
+const sameLoadout = (a, b) => a && b && a.cls === b.cls && a.primary === b.primary && a.secondary === b.secondary
+
+function openLoadout () {
+  if (G.state !== 'playing' || loadoutMenu.isOpen) return
+  const cur = G.pending || G.loadout
+  if (G.deployed) loadoutMenu.open(G.team, cur, 'change', cur)
+  else loadoutMenu.open(G.team, savedLoadout(G.team) || G.loadout, 'deploy')
+  input.mouse.left = input.mouse.right = false
+  hud.pause(false)
+  input.unlock()
+}
+
+function closeLoadout () {
+  if (!loadoutMenu.isOpen || !G.deployed) return // the first spawn needs a loadout
+  loadoutMenu.close()
   input.lock()
 }
 
+function requestLoadout (l) {
+  store.set(`loadout.${G.team}`, JSON.stringify(l))
+  const deploying = !G.deployed
+  if (!deploying && sameLoadout(l, G.pending || G.loadout)) { closeLoadout(); return }
+  net.emit('loadout', { ...l, deploy: deploying }, true)
+  if (deploying) {
+    G.deployed = true
+    hud.show(true)
+    hud.center(`DEPLOYING<small>${loadoutLabel(l)}</small>`, MATCH.respawnDelay + 0.5)
+  }
+  loadoutMenu.close()
+  input.lock()
+}
+
+function applyLoadout (l) {
+  G.loadout = l
+  G.pending = null
+  weapons.reset(l)
+  viewmodel.prepare([l.primary, l.secondary])
+}
+
 function leave (msg) {
+  loadoutMenu.close()
+  hud.scope(false)
+  G.deployed = false
   net.close()
   input.unlock()
   input.enabled = false
@@ -166,7 +241,7 @@ function leave (msg) {
 }
 
 input.onLockChange = (locked, error) => {
-  if (G.state !== 'playing') return
+  if (G.state !== 'playing' || loadoutMenu.isOpen) return
   hud.pause(!locked && !error)
   if (error) hud.notice('Pointer lock unavailable – click the game to retry')
 }
@@ -178,16 +253,22 @@ net.onDisconnect = () => { if (G.state === 'playing' || G.state === 'connecting'
 net.on('welcome', (d) => {
   G.myId = d.id
   G.team = d.team
+  G.loadout = d.loadout
+  G.pending = null
+  G.deployed = false
+  G.firstSpawn = true
+  store.set('lastTeam', d.team)
+  if (player) { player.life = 0; player.alive = false; player.deathPos = null }
   setRoster(d.roster, d.match)
   viewmodel.setTeam(d.team)
   hud.setTeam(d.team)
   G.state = 'playing'
   input.enabled = true
   showMenu(false)
+  hud.show(false) // until deployed
   setStatus('')
-  hud.pause(!input.locked)
-  if (d.spawn) onSpawn(d.spawn)
-  hud.center(`${TEAMS[d.team].name.toUpperCase()}<small>Team Deathmatch · first to ${d.match.scoreLimit}</small>`, 3)
+  if (params.has('autojoin')) requestLoadout(savedLoadout(d.team) || d.loadout)
+  else openLoadout()
 })
 
 net.on('spawn', (d) => onSpawn(d))
@@ -195,10 +276,54 @@ net.on('spawn', (d) => onSpawn(d))
 function onSpawn (d) {
   if (!player || d.life <= player.life) return
   player.spawn(d.pos, d.yaw, d.life)
-  weapons.reset()
+  applyLoadout(d.loadout)
+  G.deployed = true
   G.killerName = ''
   hud.death(false)
+  hud.show(true)
+  // pointer lock can be refused (no recent click): ask for one, as on joining before
+  if (!input.locked && !loadoutMenu.isOpen) hud.pause(true)
+  if (G.firstSpawn) {
+    G.firstSpawn = false
+    hud.center(`${TEAMS[G.team].name.toUpperCase()}<small>Team Deathmatch · first to ${G.match.scoreLimit}</small>`, 3)
+  }
 }
+
+net.on('loadout', (d) => {
+  if (d.applied === 'rejected') {
+    G.deployed = G.deployed && !!player?.alive
+    openLoadout()
+    loadoutMenu.status('That loadout is not available to your side', true)
+  } else if (d.applied === 'now') {
+    if (player?.alive && d.life === player.life) applyLoadout(d.loadout)
+    hud.notice(`Loadout changed: ${loadoutLabel(d.loadout)}`)
+  } else if (d.applied === 'next') {
+    G.pending = d.loadout
+    hud.notice(`Next spawn: ${loadoutLabel(d.loadout)}`)
+  } else {
+    G.loadout = d.loadout
+  }
+})
+
+net.on('team', (d) => {
+  if (d.denied) { loadoutMenu.status(d.denied, true); return }
+  G.team = d.team
+  G.loadout = d.loadout
+  G.pending = null
+  G.deployed = false
+  G.firstSpawn = true
+  store.set('lastTeam', d.team)
+  if (player) { player.alive = false; player.deathPos = null }
+  input.mouse.left = false
+  avatars.clear() // everyone's friend / foe status flipped
+  viewmodel.setTeam(d.team)
+  hud.setTeam(d.team)
+  hud.show(false)
+  hud.scope(false)
+  loadoutMenu.close()
+  openLoadout()
+  loadoutMenu.status(`You are now with the ${TEAMS[d.team].name}`)
+})
 
 net.on('tp', (d) => {
   G.tps++
@@ -242,7 +367,7 @@ net.on('shot', (d) => {
   const e = new THREE.Vector3(...d.e)
   const myEye = player.eyePos(new THREE.Vector3())
   audio.shot(d.w, o, o.distanceTo(myEye))
-  effects.tracer(o.clone().addScaledVector(e.clone().sub(o).normalize(), 0.8), e, 300)
+  effects.tracer(o.clone().addScaledVector(e.clone().sub(o).normalize(), 0.8), e, tracerSpeed(d.w) * 0.72)
   // impact decal where the bullet stopped (if it stopped on map geometry)
   const len = o.distanceTo(e)
   if (len > 0.5 && d.n !== 0) {
@@ -310,6 +435,9 @@ function escapeHtml (s) {
 
 // ------------------------------------------------------------------ combat
 
+// hits are hitscan; muzzle velocity only shapes how fast the tracer streaks
+const tracerSpeed = (id) => 150 + (WEAPONS[id]?.velocity ?? 685) * 0.4
+
 const tmpV = new THREE.Vector3()
 const tmpO = new THREE.Vector3()
 const muzzle = new THREE.Vector3()
@@ -350,7 +478,7 @@ function fireShot (spread) {
   const t = ph ? ph.t : maxT
   const end = tmpO.clone().addScaledVector(dir, t)
   viewmodel.muzzleWorld(camera, muzzle)
-  if (Math.random() < 0.6) effects.tracer(muzzle, end, 420)
+  if (Math.random() < 0.6) effects.tracer(muzzle, end, tracerSpeed(w.id))
   effects.muzzle(muzzle)
   if (ph) {
     effects.blood(end, dir.clone().negate())
@@ -430,8 +558,15 @@ function frame () {
   frames++; fpsT += dt
   if (fpsT >= 0.5) { G.fps = Math.round(frames / fpsT); frames = 0; fpsT = 0 }
 
-  if (G.state === 'playing' && player) updateGame(dt, now)
-  else updateMenuCamera(dt)
+  if (G.state === 'playing') {
+    if (input.wasPressed('KeyB')) { if (loadoutMenu.isOpen) closeLoadout(); else openLoadout() }
+    if (input.wasPressed('Escape')) closeLoadout()
+  }
+  if (G.state === 'playing' && player && G.deployed) updateGame(dt, now)
+  else {
+    updateMenuCamera(dt)
+    if (G.state === 'playing') avatars.update(dt, INTERP_DELAY)
+  }
 
   effects.update(dt)
   cars?.update(camera.position, dt)
@@ -472,26 +607,28 @@ function updateGame (dt, now) {
   if (input.wasPressed('Digit1')) switchTo = 0
   if (input.wasPressed('Digit2')) switchTo = 1
   if (input.wasPressed('KeyQ')) switchTo = weapons.prevIndex
-  if (input.mouse.wheel) switchTo = (weapons.index + 1) % WEAPON_IDS.length
-  const canAct = player.alive && locked && G.match.state === 'playing'
+  if (input.mouse.wheel) switchTo = (weapons.index + 1) % weapons.slots.length
+  const canAct = player.alive && locked && G.match.state === 'playing' && !loadoutMenu.isOpen
   const shots = weapons.update(dt, {
     trigger: canAct && input.mouse.left,
     triggerPressed: canAct && input.mouse.leftPressed,
     ads: canAct && input.mouse.right,
     reload: canAct && input.wasPressed('KeyR'),
-    switchTo: player.alive ? switchTo : null,
+    switchTo: player.alive && !loadoutMenu.isOpen ? switchTo : null,
     alive: canAct
   }, { speed: player.speed, grounded: player.grounded, crouched: player.crouched })
 
-  // movement
+  // movement (frozen while the loadout screen is up)
+  const steer = !loadoutMenu.isOpen
   const move = player.update(dt, {
-    f: input.down('KeyW') || input.down('ArrowUp'),
-    b: input.down('KeyS') || input.down('ArrowDown'),
-    l: input.down('KeyA') || input.down('ArrowLeft'),
-    r: input.down('KeyD') || input.down('ArrowRight'),
-    jump: input.wasPressed('Space'),
-    crouch: input.down('KeyC') || input.down('ControlLeft'),
-    ads: weapons.adsT
+    f: steer && (input.down('KeyW') || input.down('ArrowUp')),
+    b: steer && (input.down('KeyS') || input.down('ArrowDown')),
+    l: steer && (input.down('KeyA') || input.down('ArrowLeft')),
+    r: steer && (input.down('KeyD') || input.down('ArrowRight')),
+    jump: steer && input.wasPressed('Space'),
+    crouch: steer && (input.down('KeyC') || input.down('ControlLeft')),
+    ads: weapons.adsT,
+    speedMul: weapons.def.moveMul
   })
   if (move.steps) audio.footstep(null, player.crouched ? 0.05 : 0.11)
   if (move.landed) { viewmodel.land(Math.min(1, move.landed / 9)); audio.footstep(null, 0.2) }
@@ -524,9 +661,14 @@ function updateGame (dt, now) {
     fireShot(spread)
   }
   for (const ev of ws.drainEvents()) {
-    if (ev === 'fire') { audio.shot(ws.id); viewmodel.fire() } else if (ev === 'dry') audio.dry()
-    else if (ev === 'reload') audio.reload(ws.id, ws.def.reloadTime)
+    if (ev === 'fire') {
+      audio.shot(ws.id)
+      viewmodel.fire()
+      if (ws.def.action === 'bolt') audio.bolt(60 / ws.def.rpm)
+    } else if (ev === 'dry') audio.dry()
+    else if (ev === 'reload') audio.reload(ws.id, ws.reloadDur, ws.reloadSteps)
     else if (ev === 'switch') audio.weaponSwitch()
+    else if (ev === 'ping') { audio.ping(); viewmodel.ping() }
   }
 
   // send state
@@ -545,7 +687,10 @@ function updateGame (dt, now) {
   const fwd = camera.getWorldDirection(tmpV)
   audio.setListener(camera.position, fwd)
 
-  // viewmodel
+  // viewmodel (hidden behind the scope overlay when a scoped rifle is fully raised)
+  const scoped = player.alive && ws.def.scope && ws.adsT > 0.85
+  viewmodel.scoped = scoped
+  hud.scope(scoped)
   viewmodel.update({
     dt,
     weapon: ws.id,
@@ -553,8 +698,11 @@ function updateGame (dt, now) {
     speed: player.speed,
     grounded: player.grounded,
     crouched: player.crouched,
-    reloadFrac: ws.reloading ? 1 - ws.reloadT / ws.def.reloadTime : -1,
+    reloadFrac: ws.reloading ? 1 - ws.reloadT / ws.reloadDur : -1,
     drawFrac: ws.drawing ? ws.drawT / ws.def.drawTime : 0,
+    cycleFrac: ws.cycleFrac,
+    reloadSteps: ws.reloadSteps,
+    mag: ws.clip.mag,
     lookDX,
     lookDY,
     alive: player.alive
@@ -568,7 +716,8 @@ function updateGame (dt, now) {
   hud.crosshair(spread, fovCurrent, player.alive && ws.adsT < 0.5 && !ws.reloading, player.alive ? crosshairTarget() : null)
   hud.scores(G.match, G.team)
   hud.timer((G.matchEndsLocal - now) / 1000, G.match.state)
-  hud.death(!player.alive && G.match.state === 'playing', G.killerName, (G.respawnAt - now) / 1000)
+  const next = G.pending ? `Next spawn: ${loadoutLabel(G.pending)}` : 'Press B to change loadout'
+  hud.death(!player.alive && player.deathPos && G.match.state === 'playing', G.killerName, (G.respawnAt - now) / 1000, next)
   hud.scoreboard(input.down('Tab') || G.match.state === 'ended', G.roster, G.match, G.myId, G.aliveIds)
   hud.netstat(G.myPing, G.fps)
   const others = []
@@ -589,6 +738,12 @@ window.__labin = {
   cam: (pos, look) => { camOverride = pos ? { pos, look } : null },
   // test helper: start (true) / stop and return (false) the per-frame camera trace
   trace: (on) => { const t = G.trace; G.trace = on ? [] : null; return t },
+  // test helpers: drive the loadout flow without clicking, and send raw (possibly forged) requests
+  deploy: (l) => requestLoadout(l),
+  openLoadout: () => openLoadout(),
+  send: (ev, data) => net.emit(ev, data, true),
+  // test helper: pretend the pointer is locked (automated browsers are often refused pointer lock)
+  fakeLock: (v) => { input.locked = !!v; if (v) hud.pause(false) },
   // test helper: point the view at a world position
   lookAt: (x, y, z) => {
     if (!player) return
@@ -608,6 +763,11 @@ window.__labin = {
     pos: player ? [player.pos.x, player.pos.y, player.pos.z].map(r2) : null,
     weapon: weapons.id,
     ammo: weapons.clip,
+    loadout: G.loadout,
+    pending: G.pending,
+    deployed: G.deployed,
+    loadoutOpen: loadoutMenu.isOpen,
+    viewmodelHidden: !viewmodel.holder.visible,
     fps: G.fps,
     tps: G.tps,
     match: G.match,

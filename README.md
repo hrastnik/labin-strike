@@ -15,7 +15,8 @@ A browser-based, low-poly multiplayer team deathmatch shooter set on **Rudarska 
 
 **Allies vs Axis.** First team to 50 kills, or the leading team when the 10-minute timer runs out.
 
-- StG 44 and M1911, each with its own spread, recoil, damage falloff and head/leg multipliers
+- 22 WWII weapons across six classes (Rifleman, Assault, Support, Marksman, Officer, Engineer), each with its own damage falloff, fire rate, recoil, spread, reload style, handling and movement weight
+- Strict faction rules: Axis soldiers only ever carry Axis weapons and Allied soldiers Allied ones, enforced by the server
 - Aim down sights, crouch, jump, and spawn protection
 - Health regenerates COD2-style after 5 s without taking damage
 - Server-side bots fill the match up to 8 players. They use A* pathfinding, line-of-sight targeting and human-like aim error
@@ -34,9 +35,9 @@ npm install
 npm run dev          # http://localhost:7344
 ```
 
-In dev, the Node server runs the game simulation and serves the client through Vite middleware, all on one port. Open the URL, pick a callsign and hit **Deploy**. Open a second tab to play against yourself, or let the bots handle it.
+In dev, the Node server runs the game simulation and serves the client through Vite middleware, all on one port. Open the URL, pick a callsign (and optionally a side) and hit **Deploy**, then choose a class and weapons on the loadout screen. Open a second tab to play against yourself, or let the bots handle it.
 
-Handy URL params: `?name=Mateo` pre-fills the callsign and `?autojoin` deploys as soon as the map loads.
+Handy URL params: `?name=Mateo` pre-fills the callsign, `?team=axis` picks a side, `?cls=support&primary=mg42&secondary=luger` preselects a loadout, and `?autojoin` deploys as soon as the map loads.
 
 ### Controls
 
@@ -47,6 +48,7 @@ Handy URL params: `?name=Mateo` pre-fills the callsign and `?autojoin` deploys a
 | <kbd>Space</kbd> | Jump | <kbd>C</kbd> / <kbd>Ctrl</kbd> | Crouch |
 | <kbd>R</kbd> | Reload | <kbd>1</kbd> / <kbd>2</kbd> / <kbd>Q</kbd> | Rifle / pistol / last weapon |
 | <kbd>Tab</kbd> | Scoreboard | <kbd>Esc</kbd> | Pause |
+| <kbd>B</kbd> | Loadout / switch side | | |
 
 ## How it works
 
@@ -63,7 +65,31 @@ tools/    Blender build scripts for the map and cars, texture/sky generators
 - **Map.** Colliders, spawns and car markers are stored as named nodes inside `parking_lot.glb`. Server and client both read them with `shared/mapdata.js`. The server bakes a 0.5 m walkability grid from the map at startup to give bots their pathfinding.
 - **Cars.** Parked cars are instanced from `cars.glb`. Each model costs three draw calls per LOD (paint, opaque, glass), however many copies are on the map.
 
-All gameplay tuning lives in [`shared/constants.js`](shared/constants.js): match rules, movement and the weapon stats.
+Match rules and movement live in [`shared/constants.js`](shared/constants.js); weapons, classes and faction rules in [`shared/weapons.js`](shared/weapons.js).
+
+## Weapons and loadouts
+
+| Class | Axis primary | Allied primary | Kit |
+| --- | --- | --- | --- |
+| Rifleman | Kar98k, Gewehr 43 | M1 Garand, Lee-Enfield No. 4 | +25% reserve |
+| Assault | MP 40, StG 44 | M1 Thompson, Sten Mk II | |
+| Support | MG 42, FG 42 | BAR M1918A2, Bren Mk I, Browning M1919A6 | +50% reserve |
+| Marksman | Kar98k Zf. 39, Kar98k | M1903A4, M1903 Springfield | 4x / 2.5x scopes |
+| Officer | MP 40, Gewehr 43 | M1 Thompson, M1 Carbine | double pistol reserve |
+| Engineer | Kar98k, MP 40 | M1 Carbine, M3 Grease Gun | +25% reserve |
+
+Sidearms: Walther P38 and Luger P08 (Axis), M1911 and Webley Mk VI (Allies).
+
+- **Data-driven.** Every stat (damage and falloff, rpm, magazine and reserve, reload style and timing, hip/ADS/movement spread, bloom, recoil, ADS time and zoom, draw time, movement weight, muzzle velocity, sound and muzzle flash) is a field in `shared/weapons.js`. To add a weapon, add an entry, list it under a class, and optionally give it a model in `client/src/gunmodels.js`.
+- **Reload styles.** Detachable magazines, the M1 Garand's en-bloc clip (with the ping when it empties), stripper-clip chargers for bolt-actions (time depends on rounds missing), single-round loading for the scoped rifles, belt reloads for the MG 42 and M1919, and a break-top speed-loader for the Webley. Bolt-actions also work the bolt between shots.
+- **Server-authoritative.** The server stores each player's loadout and per-life ammunition. Loadout requests are validated against the player's server-side team and class lists, `fire` is only accepted for the two weapons issued for the current life while rounds remain, and spawning re-checks the loadout. Switching sides (B → Switch) converts the loadout to the other faction's equivalent, is refused when it would stack the humans, and is rate-limited. A class change applies at once within 5 s of spawning if you have not fired or been hit yet, otherwise at the next spawn. Bots roll a random class from their own faction every life.
+- There are no weapon pickups or explosive weapons; any future equip path should go through `canUse()` / `isValidLoadout()` in `shared/weapons.js`.
+
+## Tests
+
+```bash
+npm test             # weapon catalogue, faction rules, and the server's loadout / fire / team validation
+```
 
 ## Production
 

@@ -1,35 +1,50 @@
 // Local weapon state: ammo, fire timing, reloads, switching, spread bloom and recoil punch.
-import { WEAPONS, WEAPON_IDS, PLAYER } from '@shared/constants.js'
+// The loadout (which two weapons, which class) always comes from the server's spawn / equip messages.
+import { WEAPONS, startingAmmo, reloadDuration } from '@shared/weapons.js'
+import { PLAYER } from '@shared/constants.js'
+
+const SLOT_NAMES = ['primary', 'secondary']
 
 export class WeaponSystem {
   constructor () {
+    this.loadout = { cls: 'assault', primary: 'stg44', secondary: 'm1911' }
     this.reset()
   }
 
-  reset () {
+  reset (loadout) {
+    if (loadout) this.loadout = { ...loadout }
+    this.slots = [this.loadout.primary, this.loadout.secondary]
     this.ammo = {}
-    for (const id of WEAPON_IDS) this.ammo[id] = { mag: WEAPONS[id].mag, reserve: WEAPONS[id].reserve }
+    this.slots.forEach((id, i) => { this.ammo[id] = startingAmmo(this.loadout.cls, id, SLOT_NAMES[i]) })
     this.index = 0
     this.prevIndex = 1
-    this.drawT = WEAPONS[WEAPON_IDS[0]].drawTime
+    this.drawT = this.def.drawTime
     this.reloadT = 0
+    this.reloadDur = 0
+    this.reloadSteps = 0 // rounds / clips pushed in by an incremental reload (for the animation)
     this.cooldown = 0
     this.bloom = 0
     this.punch = { pitch: 0, yaw: 0 }
     this.adsT = 0
     this.triggerHeld = false
     this.lastShotAt = -1e9
-    this.events = [] // 'fire' | 'dry' | 'reload' | 'reloaded' | 'switch'
+    this.events = [] // 'fire' | 'dry' | 'reload' | 'reloaded' | 'switch' | 'ping'
   }
 
-  get id () { return WEAPON_IDS[this.index] }
+  get id () { return this.slots[this.index] }
   get def () { return WEAPONS[this.id] }
   get reloading () { return this.reloadT > 0 }
   get drawing () { return this.drawT > 0 }
   get clip () { return this.ammo[this.id] }
+  // 0..1 progress of working the bolt after a shot, -1 when not cycling
+  get cycleFrac () {
+    const w = this.def
+    if (w.action !== 'bolt' || this.cooldown <= 0) return -1
+    return 1 - this.cooldown / (60 / w.rpm)
+  }
 
   switchTo (i) {
-    if (i === this.index || i < 0 || i >= WEAPON_IDS.length) return
+    if (i === this.index || i < 0 || i >= this.slots.length) return
     this.prevIndex = this.index
     this.index = i
     this.reloadT = 0
@@ -41,8 +56,12 @@ export class WeaponSystem {
 
   startReload () {
     const a = this.clip
-    if (this.reloading || this.drawing || a.mag >= this.def.mag || a.reserve <= 0) return false
-    this.reloadT = this.def.reloadTime
+    const w = this.def
+    if (this.reloading || this.drawing || a.mag >= w.mag || a.reserve <= 0) return false
+    this.reloadDur = this.reloadT = reloadDuration(w, a.mag, a.reserve)
+    const missing = Math.min(w.mag - a.mag, a.reserve)
+    const r = w.reload
+    this.reloadSteps = r.style === 'single' ? missing : r.style === 'charger' ? Math.floor(missing / r.clip) + missing % r.clip : 1
     this.events.push('reload')
     return true
   }
@@ -64,11 +83,11 @@ export class WeaponSystem {
    * returns number of shots fired this frame
    */
   update (dt, ctl, ctx) {
-    const w = this.def
     if (ctl.switchTo != null) this.switchTo(ctl.switchTo)
+    const w = this.def
 
     const wantAds = ctl.ads && !this.reloading && !this.drawing
-    const adsSpeed = 1 / 0.18
+    const adsSpeed = 1 / w.adsTime
     this.adsT = Math.max(0, Math.min(1, this.adsT + (wantAds ? 1 : -1) * adsSpeed * dt))
 
     if (this.drawT > 0) this.drawT = Math.max(0, this.drawT - dt)
@@ -105,7 +124,7 @@ export class WeaponSystem {
     while (this.cooldown <= 0) {
       const a = this.clip
       if (a.mag <= 0) {
-        const other = this.ammo[WEAPON_IDS[1 - this.index]]
+        const other = this.ammo[this.slots[1 - this.index]]
         if (!this.triggerHeld) {
           this.events.push('dry')
           if (a.reserve <= 0 && other.mag + other.reserve > 0) { this.triggerHeld = true; this.switchTo(1 - this.index); break }
@@ -123,6 +142,8 @@ export class WeaponSystem {
       this.punch.pitch += w.recoil.pitch * kick * (0.85 + Math.random() * 0.3)
       this.punch.yaw += w.recoil.yaw * kick * (Math.random() * 2 - 1)
       this.events.push('fire')
+      // the M1 Garand throws its empty en-bloc clip out with a ping
+      if (a.mag === 0 && w.reload.style === 'enbloc') this.events.push('ping')
       if (!w.auto) break
     }
     if (shots) this.lastShotAt = performance.now()
