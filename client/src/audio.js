@@ -327,6 +327,24 @@ export class Audio {
     o.start(t); o.stop(t + 0.1)
   }
 
+  // the planted bomb's timer
+  bombBeep (pos) {
+    if (!this.ctx || !this.enabled) return
+    const ctx = this.ctx
+    const t = ctx.currentTime
+    const dest = this.out(pos)
+    dest.refDistance = 6
+    const o = ctx.createOscillator()
+    o.type = 'square'
+    o.frequency.value = 1750
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0.0001, t)
+    g.gain.exponentialRampToValueAtTime(0.16, t + 0.005)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09)
+    o.connect(g); g.connect(dest)
+    o.start(t); o.stop(t + 0.1)
+  }
+
   explosion (pos, dist) {
     if (!this.ctx || !this.enabled) return
     const ctx = this.ctx

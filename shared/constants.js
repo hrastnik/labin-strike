@@ -15,7 +15,8 @@ export const MATCH = {
   spawnProtection: 1.5, // seconds
   loadoutGrace: 5, // seconds after spawning in which a class change applies at once (if not yet in combat)
   teamSwitchCooldown: 5, // seconds
-  botToggleCooldown: 2 // seconds between one player's bot on/off switches
+  botToggleCooldown: 2, // seconds between one player's bot on/off switches
+  modeSwitchCooldown: 10 // seconds between one player's mode switches (each one restarts the match)
 }
 
 export const TEAMS = {

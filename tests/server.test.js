@@ -10,6 +10,7 @@ import { WEAPONS, WEAPON_LIST, GRENADE, KNIFE, AMMO_DROP, CLASS_IDS, isValidLoad
 import { NADE_DT, createGrenade, stepGrenade } from '../shared/grenade.js'
 import { lineOfSight } from '../shared/physics.js'
 import { CAT, CAT_STATE, CAT_COATS } from '../server/cats.js'
+import { SD, SD_SITES, otherTeam } from '../shared/modes.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -612,4 +613,165 @@ test('cats bolt from a soldier walking up, a passing bullet and a grenade, but l
   assert.equal(cat.state, CAT_STATE.run, 'a grenade going off')
   for (const q of others) q.pos[1] -= 40
   ch.disconnect()
+})
+
+// ------------------------------------------------------------------ Search and Destroy
+
+const AXIS_KIT = { cls: 'assault', primary: 'mp40', secondary: 'p38' }
+const ALLIES_KIT = { cls: 'assault', primary: 'thompson', secondary: 'm1911' }
+
+// two humans and no bots, so nothing but the test decides a round
+function sdMatch () {
+  game.botsEnabled = false
+  game.balanceBots()
+  const ax = connect('Victor', { team: 'axis' })
+  const al = connect('Whiskey', { team: 'allies' })
+  const a = deploy(ax, AXIS_KIT)
+  const b = deploy(al, ALLIES_KIT)
+  game.mode = 'sd'
+  game.restartMatch()
+  for (const p of [a, b]) p.protectUntil = 0
+  return { ax, al, a, b }
+}
+
+function endSd (...chs) {
+  for (const ch of chs) ch.disconnect()
+  game.mode = 'tdm'
+  game.botsEnabled = true
+  game.restartMatch()
+  game.balanceBots()
+}
+
+function plantAt (ch, site) {
+  ch.player.pos = site.pos.slice()
+  ch.send('use', { on: true })
+  advance(SD.plantTime * 1000 + 200)
+}
+
+test('S&D: any player switches the mode, and the fallen stay down until the next round', () => {
+  game.botsEnabled = false
+  game.balanceBots()
+  const ax = connect('Victor', { team: 'axis' })
+  const al = connect('Whiskey', { team: 'allies' })
+  const a = deploy(ax, AXIS_KIT)
+  const b = deploy(al, ALLIES_KIT)
+  clock += MATCH.modeSwitchCooldown * 1000
+  ax.send('mode', { mode: 'sd' })
+  assert.ok(al.sent.some(([ev, d]) => ev === 'notice' && /Victor switched the mode to Search & Destroy/.test(d.m)))
+  const m = al.last('roster').match
+  assert.deepEqual([m.mode, m.round, m.attackers, m.roundState, m.scoreLimit], ['sd', 1, SD.firstAttackers, 'live', SD.roundsToWin])
+  assert.ok(a.alive && b.alive, 'everyone deployed starts the round')
+  ax.send('mode', { mode: 'tdm' })
+  assert.equal(game.mode, 'sd', 'one player cannot flip the mode straight back')
+
+  b.protectUntil = 0
+  game.applyDamage(b, a, 500, 'mp40', 'body')
+  advance(100)
+  assert.deepEqual([game.sd.state, game.sd.winner, game.sd.reason], ['over', 'axis', 'eliminated'])
+  assert.deepEqual(game.match.scores, { allies: 0, axis: 1 }, 'rounds, not kills, are the score')
+  advance((MATCH.respawnDelay + 1) * 1000)
+  assert.equal(b.alive, false, 'no respawning')
+  advance(SD.roundOver * 1000)
+  assert.equal(game.sd.round, 2)
+  assert.ok(b.alive, 'back for the next round')
+  endSd(ax, al)
+})
+
+test('S&D: an attacker plants by holding use at a site, and a defender who stays put defuses it', () => {
+  const { ax, al, a, b } = sdMatch()
+  const site = SD_SITES[game.sd.defenders][0]
+  b.pos = [site.pos[0] + 20, site.pos[1], site.pos[2]]
+  a.pos = [site.pos[0] + SD.siteRadius + 2, site.pos[1], site.pos[2]]
+  ax.send('use', { on: true })
+  advance(SD.plantTime * 1000 + 200)
+  assert.equal(game.sd.bomb, null, 'nothing to plant outside a site')
+  plantAt(ax, site)
+  assert.equal(game.sd.bomb?.site, site.id)
+  assert.equal(al.last('bomb').e, 'plant')
+  assert.equal(ax.last('act').k, null)
+  assert.equal(al.last('roster').match.bomb.s, site.id)
+
+  const bp = game.sd.bomb.pos
+  b.pos = [bp[0] + 1, bp[1], bp[2]]
+  al.send('use', { on: true })
+  advance(100)
+  assert.equal(al.last('act').k, 'defuse')
+  advance(SD.defuseTime * 1000 - 1000)
+  b.pos = [bp[0] - 1, bp[1], bp[2]]
+  advance(1500)
+  assert.equal(game.sd.state, 'live', 'shifting position starts the defuse over')
+  advance(SD.defuseTime * 1000)
+  assert.deepEqual([game.sd.state, game.sd.winner, game.sd.reason], ['over', 'allies', 'defused'])
+  assert.equal(al.last('bomb').e, 'defuse')
+  endSd(ax, al)
+})
+
+test('S&D: the bomb kills everyone close when it goes off, and a round with no plant goes to the defenders', () => {
+  const { ax, al, a, b } = sdMatch()
+  const site = SD_SITES[game.sd.defenders][1]
+  b.pos = [site.pos[0] + 30, site.pos[1], site.pos[2]]
+  plantAt(ax, site)
+  const bp = game.sd.bomb.pos
+  b.pos = [bp[0] + SD.killRadius - 2, bp[1], bp[2]]
+  a.pos = [bp[0] - SD.blastRadius - 5, bp[1], bp[2]]
+  advance(SD.bombTime * 1000)
+  assert.deepEqual([game.sd.winner, game.sd.reason], ['axis', 'bomb'])
+  assert.equal(b.alive, false, 'caught in the blast')
+  assert.ok(a.alive, 'out of reach')
+  assert.equal(al.last('bomb').e, 'boom')
+  assert.equal(al.last('kill').w, SD.bomb.id)
+
+  advance(SD.roundOver * 1000 + 100)
+  assert.equal(game.sd.state, 'live')
+  advance(SD.roundTime * 1000)
+  assert.deepEqual([game.sd.winner, game.sd.reason], ['allies', 'time'])
+  endSd(ax, al)
+})
+
+test('S&D: the roles swap at halftime and the first side to the round limit wins the match', () => {
+  const { ax, al } = sdMatch()
+  game.sd.round = SD.halftime
+  game.sd.endRound(game.sd.defenders, 'time')
+  advance(SD.roundOver * 1000 + 100)
+  assert.equal(game.sd.round, SD.halftime + 1)
+  assert.equal(game.sd.attackers, otherTeam(SD.firstAttackers))
+  assert.ok(al.sent.some(([ev, d]) => ev === 'notice' && /Halftime/.test(d.m)))
+  game.match.scores.allies = SD.roundsToWin - 1
+  game.sd.endRound('allies', 'eliminated')
+  assert.deepEqual([game.match.state, game.match.winner], ['ended', 'allies'])
+  endSd(ax, al)
+})
+
+test('S&D: bots plant at their site when nobody is around, and defending bots run to the bomb and defuse it', () => {
+  const ch = connect('Xray', { team: 'axis' })
+  game.mode = 'sd'
+  game.restartMatch()
+  const sd = game.sd
+  const quiet = (q) => Object.assign(q.bot, { target: null, visible: false, alertPos: null, nextPerceive: Infinity, pauseUntil: 0 })
+  const run = (q, ms) => { for (let t = 0; t < ms && sd.state === 'live'; t += 33) { clock += 33; q.bot.update(0.033, clock, true); sd.updateActions(clock) } }
+
+  const planter = [...game.players.values()].find((q) => q.isBot && q.team === sd.attackers)
+  const site = SD_SITES[sd.defenders].find((s) => s.id === planter.bot.sdSite)
+  planter.bot.motor.setPosition(...site.pos)
+  planter.pos = site.pos.slice()
+  quiet(planter)
+  run(planter, SD.plantTime * 1000 + 1500)
+  assert.equal(sd.bomb?.site, site.id, 'planted')
+  assert.equal(sd.bomb.by, planter.id)
+
+  const defender = [...game.players.values()].find((q) => q.isBot && q.team === sd.defenders)
+  // 4 m off in the open, on the bomb's own level (site B is up on the terrace)
+  const bp = sd.bomb.pos
+  const start = Array.from({ length: 16 }, (_, k) => [bp[0] + Math.cos(k * Math.PI / 8) * 4, bp[1], bp[2] + Math.sin(k * Math.PI / 8) * 4])
+    .find((pt) => {
+      const i = game.nav.nearestWalkable(pt[0], pt[2], 0)
+      return i >= 0 && Math.abs(game.nav.height[i] - bp[1]) < 0.3 && [0.3, 1.1].every((h) => lineOfSight(game.RAPIER, game.world, [bp[0], bp[1] + h, bp[2]], [pt[0], pt[1] + h, pt[2]]))
+    })
+  defender.bot.motor.setPosition(...start)
+  defender.pos = start
+  quiet(defender)
+  run(defender, SD.defuseTime * 1000 + 4000)
+  assert.deepEqual([sd.state, sd.winner, sd.reason], ['over', sd.defenders, 'defused'])
+  ch.disconnect()
+  endSd()
 })

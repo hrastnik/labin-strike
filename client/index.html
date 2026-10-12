@@ -18,12 +18,16 @@
     <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
     <div id="target-name"></div>
     <div id="fuse"><i id="fuse-fill"></i></div>
+    <div id="sd-markers"></div>
+    <div id="use-prompt"></div>
+    <div id="act"><div id="act-label"></div><div class="bar"><i id="act-fill"></i></div></div>
 
     <div id="topbar">
       <div class="team allies"><span class="flag"></span><span class="label">Allies</span><span class="score" id="score-allies">0</span></div>
       <div id="timer">10:00</div>
       <div class="team axis"><span class="score" id="score-axis">0</span><span class="label">Axis</span><span class="flag"></span></div>
     </div>
+    <div id="round-info"></div>
 
     <div id="center-msg"></div>
     <div id="notices"></div>
@@ -46,7 +50,7 @@
     </div>
 
     <div id="death" class="hidden">
-      <div class="title">You were killed</div>
+      <div class="title" id="death-title">You were killed</div>
       <div class="by" id="death-by"></div>
       <div class="respawn" id="death-respawn"></div>
       <div class="next" id="death-next"></div>
@@ -54,7 +58,7 @@
 
     <div id="scoreboard" class="hidden"></div>
     <div id="netstat"></div>
-    <div id="pause" class="hidden"><div class="box"><div class="title">Paused</div><div>Click to return to the fight</div><div class="pause-actions"><button id="btn-loadout" class="ghost">Change loadout <kbd>B</kbd></button><button id="btn-bots" class="ghost">Bots: on</button><button id="btn-leave" class="ghost">Leave match</button></div></div></div>
+    <div id="pause" class="hidden"><div class="box"><div class="title">Paused</div><div>Click to return to the fight</div><div class="pause-actions"><button id="btn-loadout" class="ghost">Change loadout <kbd>B</kbd></button><button id="btn-bots" class="ghost">Bots: on</button><button id="btn-mode" class="ghost">Mode: TDM</button><button id="btn-leave" class="ghost">Leave match</button></div></div></div>
   </div>
 
   <div id="loadout" class="hidden">
@@ -116,6 +120,7 @@
         <div><kbd>R</kbd> reload</div><div><kbd>1</kbd>/<kbd>2</kbd>/<kbd>Q</kbd> weapons</div>
         <div><kbd>Tab</kbd> scores</div><div><kbd>Esc</kbd> pause</div>
         <div><kbd>V</kbd> knife</div><div><kbd>B</kbd> loadout</div>
+        <div><kbd>F</kbd> plant / defuse (S&amp;D)</div>
       </div>
     </div>
     <div class="menu-credit">Map reconstructed from street-level references of Rudarska ulica, Labin</div>

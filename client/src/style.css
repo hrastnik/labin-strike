@@ -109,7 +109,34 @@ canvas#game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: b
 #center-msg.show { opacity: 1; }
 #center-msg small { display: block; font-family: 'Oswald', sans-serif; font-size: 17px; letter-spacing: 0.1em; color: var(--ink-dim); margin-top: 6px; }
 
-#notices { position: absolute; top: 66px; left: 50%; transform: translateX(-50%); text-align: center; font-size: 14px; color: var(--ink-dim); }
+#round-info {
+  position: absolute; top: 56px; left: 50%; transform: translateX(-50%); white-space: nowrap;
+  font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-dim);
+}
+#round-info b { color: var(--accent); font-weight: 500; }
+#round-info.bomb b { color: #ff7a6b; }
+#sd-markers { position: absolute; inset: 0; overflow: hidden; }
+.sd-mark {
+  position: absolute; transform: translate(-50%, -100%); text-align: center; line-height: 1;
+  font-family: 'Stardos Stencil', 'Oswald', sans-serif; font-size: 26px; color: var(--mark);
+}
+.sd-mark small { display: block; font-family: 'Oswald', sans-serif; font-size: 12px; letter-spacing: 0.1em; color: var(--ink-dim); margin-top: 2px; }
+.sd-mark.attack { --mark: #ffb35a; }
+.sd-mark.defend { --mark: #8fd8ff; }
+.sd-mark.bomb { --mark: #ff5b4a; animation: blink 0.8s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0.35; } }
+#use-prompt {
+  position: absolute; left: 50%; top: calc(50% + 86px); transform: translateX(-50%);
+  font-size: 16px; letter-spacing: 0.06em; color: var(--accent); white-space: nowrap;
+}
+#use-prompt kbd { color: var(--ink); }
+#act { position: absolute; left: 50%; top: calc(50% + 80px); width: 220px; transform: translateX(-50%); text-align: center; opacity: 0; }
+#act.show { opacity: 1; }
+#act-label { font-size: 14px; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 6px; }
+#act .bar { height: 6px; background: rgba(0, 0, 0, 0.45); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55); }
+#act .bar i { display: block; height: 100%; width: 0; background: var(--accent); }
+
+#notices { position: absolute; top: 84px; left: 50%; transform: translateX(-50%); text-align: center; font-size: 14px; color: var(--ink-dim); }
 #notices div { animation: fadeout 5s forwards; }
 @keyframes fadeout { 0%, 75% { opacity: 1; } 100% { opacity: 0; } }
 

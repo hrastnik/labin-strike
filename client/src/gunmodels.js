@@ -908,3 +908,15 @@ export function buildAmmoCan (team) {
   box(0.342, 0.022, 0.142, mat(team === 'axis' ? '#cfc9b4' : '#c9a834'), 0, 0.12, 0, g) // stencilled band
   return g
 }
+
+// Search and Destroy demolition charge: bundled TNT with a timer box and a lamp that blinks the fuse down
+export function buildBomb () {
+  const g = new THREE.Group()
+  const tnt = mat('#9c4a2c', { roughness: 0.8 })
+  for (let i = 0; i < 3; i++) cylZ(0.035, 0.3, tnt, (i - 1) * 0.072, 0.036, 0, g)
+  for (let i = 0; i < 2; i++) cylZ(0.035, 0.3, tnt, (i - 0.5) * 0.072, 0.098, 0, g)
+  for (const z of [-0.09, 0.09]) box(0.232, 0.142, 0.022, M.leather, 0, 0.066, z, g) // straps
+  box(0.11, 0.06, 0.09, M.black, 0, 0.16, 0, g) // timer
+  const lamp = sphere(0.016, new THREE.MeshStandardMaterial({ color: '#7a1a12', emissive: '#ff2a1a', emissiveIntensity: 0 }), 0.03, 0.198, 0, g)
+  return { group: g, lamp }
+}

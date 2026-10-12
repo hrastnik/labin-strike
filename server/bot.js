@@ -1,7 +1,9 @@
-// Server-side TDM bot: patrols via the nav grid, acquires targets by line of sight,
+// Server-side bot: patrols via the nav grid, acquires targets by line of sight,
 // tracks them with human-like turn rates / aim error and fires bursts with weapon spread.
+// In Search and Destroy it heads for a bomb site instead of patrolling, and plants, guards or defuses there.
 import { PLAYER, WEAPONS } from '../shared/constants.js'
 import { GRENADE, KNIFE } from '../shared/weapons.js'
+import { SD, SD_SITES } from '../shared/modes.js'
 import { knifeReach } from '../shared/hitbox.js'
 import { CharacterMotor, lineOfSight } from '../shared/physics.js'
 
@@ -56,6 +58,9 @@ export class Bot {
     this.aimHead = false
     this.nadeRollAt = 0
     this.knifeReadyAt = 0
+    this.sdSite = null
+    this.spot = null
+    this.repathAt = 0
   }
 
   dispose () { this.motor.dispose() }
@@ -66,6 +71,13 @@ export class Bot {
     this.motor.setCrouch(false)
     this.motor.setPosition(p.pos[0], p.pos[1], p.pos[2])
     this.pauseUntil = this.g.now() + 300 + Math.random() * 600
+    const sd = this.g.sd
+    if (sd) {
+      // most of the attack goes for the round's target site; the defence splits between both
+      const ids = SD_SITES[sd.defenders].map((s) => s.id)
+      if (p.team === sd.attackers) this.sdSite = Math.random() < 0.75 ? sd.target : ids.find((id) => id !== sd.target)
+      else this.sdSite = ids[Math.floor(Math.random() * ids.length)]
+    }
   }
 
   onDamaged (attacker) {
@@ -147,6 +159,7 @@ export class Bot {
     let lookYaw = p.yaw; let lookPitch = 0
     let crouch = false
     const speed = PLAYER.walkSpeed * 0.92 * w.moveMul
+    p.useOn = false
 
     if (tgt && this.visible && active) {
       // ----- combat
@@ -190,13 +203,29 @@ export class Bot {
       this.burstLeft = 0
       if (active) this.maybeThrowGrenade(now)
       if (!this.reloadUntil && this.mag < w.mag * 0.4) this.reloadUntil = now + w.reloadTime * 1000
-      // ----- navigation: last seen target > alert > patrol
+      // ----- navigation: urgent objective > last seen target > alert > objective > patrol
+      const obj = this.g.sd ? this.objective(now) : null
       let dest = null
-      if (this.target && this.lastSeenPos && now - this.lastSeenAt < 7000) dest = this.lastSeenPos
+      if (obj?.urgent) dest = obj.pos
+      else if (this.target && this.lastSeenPos && now - this.lastSeenAt < 7000) dest = this.lastSeenPos
       else if (this.alertPos && now - this.alertAt < 9000) dest = this.alertPos
       else this.target = null
+      if (!dest && obj) dest = obj.pos
+      const there = obj && dest === obj.pos && Math.hypot(obj.pos[0] - p.pos[0], obj.pos[2] - p.pos[2]) < obj.radius
+      if (there) {
+        this.path = null
+        this.goal = null
+        crouch = obj.act
+        p.useOn = obj.act && active
+        lookYaw = this.watchYaw(now)
+      }
 
-      if (dest && (!this.goal || Math.hypot(this.goal[0] - dest[0], this.goal[2] - dest[2]) > 3)) this.setGoal(dest)
+      // a fight drops the path but not the goal; an objective is worth planning again for
+      const replan = obj && dest === obj.pos && !this.path && now >= this.repathAt
+      if (dest && !there && (replan || !this.goal || Math.hypot(this.goal[0] - dest[0], this.goal[2] - dest[2]) > 3)) {
+        this.setGoal(dest)
+        if (!this.path) this.repathAt = now + 1000
+      }
       if (!dest && (!this.path || this.pathIdx >= this.path.length) && now >= this.pauseUntil) {
         if (this.path && this.pathIdx >= this.path.length && Math.random() < 0.45) {
           this.path = null
@@ -223,7 +252,7 @@ export class Bot {
       } else if (now < this.pauseUntil) {
         lookYaw = p.yaw + Math.sin(now * 0.0012 + this.seed) * 0.02
       }
-      if (dest && !this.path) lookYaw = Math.atan2(-(dest[0] - p.pos[0]), -(dest[2] - p.pos[2]))
+      if (dest && !this.path && !there) lookYaw = Math.atan2(-(dest[0] - p.pos[0]), -(dest[2] - p.pos[2]))
     }
 
     // separation from nearby players so bots do not stack
@@ -349,6 +378,37 @@ export class Bot {
     if (!lineOfSight(this.g.RAPIER, this.g.world, eye, [eye[0] + d[0] * 2, eye[1] + d[1] * 2, eye[2] + d[2] * 2])) return
     p.yaw = yaw
     this.g.throwGrenade(p, eye, d)
+  }
+
+  // Search and Destroy: where to be when not fighting. act: plant / defuse on arrival; urgent: drop any chase for it
+  objective (now) {
+    const sd = this.g.sd
+    if (sd.state !== 'live') return null
+    const site = SD_SITES[sd.defenders].find((s) => s.id === this.sdSite)?.pos
+    if (this.p.team === sd.attackers) {
+      if (sd.bomb) return { pos: this.spotNear(sd.bomb.pos, 7), radius: 1.5, act: false, urgent: false }
+      return { pos: site, radius: SD.siteRadius - 1, act: true, urgent: true }
+    }
+    if (sd.bomb) return { pos: sd.bomb.pos, radius: SD.defuseReach - 0.6, act: true, urgent: true }
+    return { pos: this.spotNear(site, 6), radius: 1.5, act: false, urgent: false }
+  }
+
+  // a walkable spot near centre, kept until the centre changes, so guards spread out around a site or the bomb
+  spotNear (center, r) {
+    const key = center.join()
+    if (this.spot?.key !== key) {
+      const nav = this.g.nav
+      const a = Math.random() * TAU; const d = Math.random() * r
+      const i = nav.nearestWalkable(center[0] + Math.sin(a) * d, center[2] + Math.cos(a) * d, 3)
+      this.spot = { key, pos: i >= 0 ? nav.center(i) : center }
+    }
+    return this.spot.pos
+  }
+
+  // holding a spot: scan the side the enemy comes from (allies spawn at +X, axis at -X)
+  watchYaw (now) {
+    const toEnemy = this.p.team === 'allies' ? Math.PI / 2 : -Math.PI / 2
+    return wrap(toEnemy + Math.sin(now * 0.0007 + this.seed) * 1.2)
   }
 
   setGoal (pos) {

@@ -1,6 +1,6 @@
 # Labin Strike
 
-A browser-based, low-poly multiplayer team deathmatch shooter set on **Rudarska ulica in Labin, Croatia**. The map is rebuilt from street-level references, and the gunplay is old-school: hitscan rifles, health that regenerates, and bots that fill empty slots.
+A browser-based, low-poly multiplayer shooter (Team Deathmatch and Search and Destroy) set on **Rudarska ulica in Labin, Croatia**. The map is rebuilt from street-level references, and the gunplay is old-school: hitscan rifles, health that regenerates, and bots that fill empty slots.
 
 ![Aerial view of the Rudarska ulica map](docs/screenshots/overview.jpg)
 
@@ -13,7 +13,13 @@ A browser-based, low-poly multiplayer team deathmatch shooter set on **Rudarska 
     <td width="50%"><img src="docs/screenshots/menu.jpg" alt="Main menu" /></td>
     <td width="50%" valign="top">
 
-**Allies vs Axis.** First team to 50 kills, or the leading team when the 10-minute timer runs out.
+**Allies vs Axis**, in two modes that any player can switch from the pause screen:
+
+- **Team Deathmatch.** First team to 50 kills, or the leading team when the 10-minute timer runs out.
+- **Search and Destroy.** Rounds without respawns. The attackers plant a demolition charge at one of the defenders' two sites (hold <kbd>F</kbd> for 4 s); the defenders stop them, or defuse it (7 s) before its 40 s fuse runs out. First to 6 rounds. Teams keep their weapons and spawns, so the attacking role swaps at halftime, and each side defends the sites on its own half. Bots plant, guard and defuse too
+
+Features:
+
 
 - 22 WWII weapons across six classes (Rifleman, Assault, Support, Marksman, Officer, Engineer), each with its own damage falloff, fire rate, recoil, spread, reload style, handling and movement weight
 - Strict faction rules: Axis soldiers only ever carry Axis weapons and Allied soldiers Allied ones, enforced by the server
@@ -54,12 +60,13 @@ Handy URL params: `?name=Mateo` pre-fills the callsign, `?team=axis` picks a sid
 | <kbd>R</kbd> | Reload | <kbd>1</kbd> / <kbd>2</kbd> / <kbd>Q</kbd> | Rifle / pistol / last weapon |
 | <kbd>Tab</kbd> | Scoreboard | <kbd>Esc</kbd> | Pause |
 | <kbd>V</kbd> | Knife | <kbd>B</kbd> | Loadout / switch side |
+| <kbd>F</kbd> (hold) | Plant / defuse (Search and Destroy) | | |
 
 ## How it works
 
 ```
 client/   three.js renderer, input, HUD, viewmodel, audio, prediction   (Vite)
-server/   authoritative TDM simulation, bots, nav grid, HTTP + signaling
+server/   authoritative match simulation (TDM, S&D rounds), bots, nav grid, HTTP + signaling
 shared/   constants, Rapier physics + character motor, hitboxes, map parsing
 tools/    Blender build scripts for the map and cars, texture/sky generators
 ```
@@ -70,10 +77,11 @@ tools/    Blender build scripts for the map and cars, texture/sky generators
 - **Knife and ammo cans.** The client picks who its stab reaches, and the server re-checks reach, angle and line of sight with some slack for latency (`knifeReach` in `shared/hitbox.js`). The server also places the ammo cans, gives each one to the first soldier over it who is short of ammunition, and removes them when they expire. Clients only draw them.
 - **Cats.** Where Counter-Strike has chickens, Rudarska ulica has the main developer's cats. `server/cats.js` walks them around the nav grid, lets them stop to look around or lie down, and sends them running from soldiers who come close (crouch to sneak up), from bullets passing near them and from grenades. Nobody can hurt them. They ride along in the snapshots, and `client/src/cats.js` animates the Blender model with code: legs, head and tail each have their own pivot.
 - **Hits.** Players have a head sphere plus body and leg capsules, defined in `shared/hitbox.js`. The client claims a hit, and the server checks the shooter's position, the target's position and line of sight before applying damage.
+- **Search and Destroy.** `server/sd.js` runs the rounds: one spawn each (joiners still get in during the first 15 s), the round and bomb timers, elimination and halftime. Planting and defusing are timed on the server while the client holds the use key and stays put, so a client cannot shorten them. The four bomb sites in `shared/modes.js` were placed with the nav grid so the defenders reach a site in about half the attackers' time.
 - **Map.** Colliders, spawns and car markers are stored as named nodes inside `parking_lot.glb`. Server and client both read them with `shared/mapdata.js`. The server bakes a 0.5 m walkability grid from the map at startup to give bots their pathfinding.
 - **Cars.** Parked cars are instanced from `cars.glb`. Each model costs three draw calls per LOD (paint, opaque, glass), however many copies are on the map.
 
-Match rules and movement live in [`shared/constants.js`](shared/constants.js); weapons, classes and faction rules in [`shared/weapons.js`](shared/weapons.js).
+Match rules and movement live in [`shared/constants.js`](shared/constants.js); modes, Search and Destroy timings and bomb sites in [`shared/modes.js`](shared/modes.js); weapons, classes and faction rules in [`shared/weapons.js`](shared/weapons.js).
 
 ## Weapons and loadouts
 
@@ -96,7 +104,7 @@ Sidearms: Walther P38 and Luger P08 (Axis), M1911 and Webley Mk VI (Allies).
 ## Tests
 
 ```bash
-npm test             # weapon catalogue, faction rules, grenades, and the server's loadout / fire / team / movement validation
+npm test             # weapon catalogue, faction rules, grenades, the server's loadout / fire / team / movement validation, and Search and Destroy rounds
 ```
 
 ## Production

@@ -1,4 +1,4 @@
-// Authoritative Team Deathmatch simulation: players, bots, damage, scoring, match flow.
+// Authoritative match simulation: players, bots, damage, scoring, match flow (Team Deathmatch or Search and Destroy).
 import fs from 'node:fs'
 import path from 'node:path'
 import RAPIER from '@dimforge/rapier3d-compat'
@@ -10,10 +10,12 @@ import {
 import { parseGlbJson, extractMapData } from '../shared/mapdata.js'
 import { buildMapWorld, rayMap, lineOfSight } from '../shared/physics.js'
 import { NADE_DT, createGrenade, stepGrenade } from '../shared/grenade.js'
+import { MODES, SD } from '../shared/modes.js'
 import { rayVsPlayer, knifeReach } from '../shared/hitbox.js'
 import { NavGrid } from './navgrid.js'
 import { Bot } from './bot.js'
 import { Cats, CAT } from './cats.js'
+import { SearchAndDestroy } from './sd.js'
 
 const TEAM_IDS = ['allies', 'axis']
 const r2 = (v) => Math.round(v * 100) / 100
@@ -33,6 +35,8 @@ export class Game {
     this.startedAt = Date.now()
     this.botNames = [...BOT_NAMES].sort(() => Math.random() - 0.5)
     this.botsEnabled = true
+    this.mode = 'tdm'
+    this.sd = null // the Search and Destroy rounds while that mode is on
   }
 
   now () { return Date.now() - this.startedAt }
@@ -85,6 +89,8 @@ export class Game {
     channel.on('loadout', (data) => { const p = channel.player; if (p) this.handleLoadout(p, data) })
     channel.on('team', (data) => { const p = channel.player; if (p) this.handleTeam(p, data) })
     channel.on('bots', (data) => { const p = channel.player; if (p) this.handleBots(p, data) })
+    channel.on('mode', (data) => { const p = channel.player; if (p) this.handleMode(p, data) })
+    channel.on('use', (data) => { const p = channel.player; if (p) this.sd?.use(p, data?.on) })
     channel.on('pong', (data) => { const p = channel.player; if (p && data && typeof data.t === 'number') p.ping = Math.max(0, this.now() - data.t) })
     channel.on('chat', (data) => {
       const p = channel.player
@@ -205,7 +211,8 @@ export class Game {
       for (let i = bots.length; i < want; i++) {
         const name = this.botNames.shift() || `Bot ${this.nextId}`
         const b = this.createPlayer({ name, team, isBot: true })
-        this.spawn(b)
+        if (this.canSpawn(b, this.now())) this.spawn(b)
+        else b.respawnAt = this.now()
       }
       // remove surplus bots, dead ones first
       bots.sort((a, b) => Number(a.alive) - Number(b.alive))
@@ -258,6 +265,7 @@ export class Game {
     // last line of defence: whatever path got us here, never spawn with another faction's weapons
     if (!isValidLoadout(p.team, p.loadout)) p.loadout = sanitizeLoadout(p.team, p.loadout)
     this.equip(p)
+    this.sd?.onSpawn(p)
     if (p.isBot) p.bot.onSpawn()
     else p.channel.emit('spawn', { life: p.life, pos: p.pos, yaw: p.yaw, loadout: p.loadout }, { reliable: true })
   }
@@ -343,6 +351,19 @@ export class Game {
     this.balanceBots()
     this.broadcastRoster()
     this.emitAll('notice', { m: `${p.name} turned bots ${data.on ? 'on' : 'off'}` }, true)
+  }
+
+  // any player can switch the mode for the whole server; it starts a fresh match
+  handleMode (p, data) {
+    const now = this.now()
+    const mode = data?.mode
+    if (!Object.hasOwn(MODES, mode) || mode === this.mode) return
+    if (now - (p.lastModeSwitch ?? -Infinity) < MATCH.modeSwitchCooldown * 1000) return
+    p.lastModeSwitch = now
+    this.mode = mode
+    console.log(`[game] ${p.name} switched the mode to ${mode}`)
+    this.emitAll('notice', { m: `${p.name} switched the mode to ${MODES[mode].name}` }, true)
+    this.restartMatch()
   }
 
   // ------------------------------------------------------------------ client messages
@@ -540,6 +561,7 @@ export class Game {
   applyDamage (victim, attacker, amount, weapon, zone, from = attacker.pos) {
     const now = this.now()
     if (!victim.alive || now < victim.protectUntil || amount <= 0) return
+    if (this.sd && this.sd.state !== 'live') return
     victim.hp -= amount
     victim.lastDamageAt = now
     const killed = victim.hp <= 0
@@ -559,12 +581,12 @@ export class Game {
     victim.respawnAt = this.now() + MATCH.respawnDelay * 1000
     if (attacker && attacker !== victim && attacker.team !== victim.team) {
       attacker.kills++
-      this.match.scores[attacker.team]++
+      if (!this.sd) this.match.scores[attacker.team]++
     }
     this.emitAll('kill', { k: attacker?.id, v: victim.id, w: weapon, hs: headshot }, true)
     this.dropAmmo(victim)
     if (victim.cookAt) this.dropCooked(victim)
-    if (this.match.scores[attacker?.team] >= MATCH.scoreLimit) this.endMatch(attacker.team)
+    if (!this.sd && this.match.scores[attacker?.team] >= MATCH.scoreLimit) this.endMatch(attacker.team)
     else this.broadcastRoster()
   }
 
@@ -615,21 +637,34 @@ export class Game {
 
   restartMatch () {
     this.match = { state: 'playing', scores: { allies: 0, axis: 0 }, endsAt: this.now() + MATCH.timeLimit * 1000, restartAt: 0, winner: null }
+    for (const p of this.players.values()) { p.kills = 0; p.deaths = 0 }
+    this.emitAll('notice', { m: `New match: ${MODES[this.mode].name}` }, true)
+    if (this.mode === 'sd') {
+      this.sd = new SearchAndDestroy(this)
+      this.sd.nextRound()
+      return
+    }
+    this.sd = null
+    this.clearField()
+    for (const p of this.players.values()) if (p.deployed) this.spawn(p)
+    this.broadcastRoster()
+  }
+
+  // grenades in flight and ammo cans go when a match or a round starts
+  clearField () {
     this.grenades = []
     for (const d of this.drops.slice()) this.removeDrop(d)
-    for (const p of this.players.values()) {
-      p.kills = 0
-      p.deaths = 0
-      if (p.deployed) this.spawn(p)
-    }
-    this.broadcastRoster()
-    this.emitAll('notice', { m: 'New round: Team Deathmatch' }, true)
+  }
+
+  canSpawn (p, now) {
+    if (this.match.state !== 'playing' || !p.deployed) return false
+    return this.sd ? this.sd.canSpawn(p, now) : now >= p.respawnAt
   }
 
   tick (dt) {
     const now = this.now()
     const m = this.match
-    if (m.state === 'playing' && now >= m.endsAt) {
+    if (m.state === 'playing' && !this.sd && now >= m.endsAt) {
       const s = m.scores
       this.endMatch(s.allies === s.axis ? 'draw' : s.allies > s.axis ? 'allies' : 'axis')
     } else if (m.state === 'ended' && now >= m.restartAt) {
@@ -642,7 +677,7 @@ export class Game {
     if (anyHumans) this.cats.update(dt, now)
     for (const p of this.players.values()) {
       if (!p.alive) {
-        if (p.respawnAt && now >= p.respawnAt && m.state === 'playing' && p.deployed) this.spawn(p)
+        if (p.respawnAt && this.canSpawn(p, now)) this.spawn(p)
         continue
       }
       if (p.hp < PLAYER.maxHealth && now - p.lastDamageAt > PLAYER.regenDelay * 1000) {
@@ -650,6 +685,7 @@ export class Game {
       }
       if (p.isBot && anyHumans) p.bot.update(dt, now, m.state === 'playing')
     }
+    this.sd?.tick(now)
   }
 
   // ------------------------------------------------------------------ networking
@@ -684,13 +720,18 @@ export class Game {
 
   matchInfo () {
     const m = this.match
+    const now = this.now()
+    const left = m.state !== 'playing' ? m.restartAt - now : this.sd ? this.sd.timeLeft(now) : m.endsAt - now
     return {
+      mode: this.mode,
       state: m.state,
       scores: m.scores,
       winner: m.winner,
-      scoreLimit: MATCH.scoreLimit,
+      scoreLimit: this.sd ? SD.roundsToWin : MATCH.scoreLimit,
       bots: this.botsEnabled,
-      timeLeft: Math.max(0, Math.round(((m.state === 'playing' ? m.endsAt : m.restartAt) - this.now()) / 1000))
+      timeLeft: Math.max(0, Math.round(left / 1000)),
+      msLeft: Math.max(0, Math.round(left)),
+      ...this.sd?.info()
     }
   }
 
