@@ -668,6 +668,52 @@ export const CLASSES = {
   }
 }
 
+// Every soldier carries the German stick grenade, whichever side they fight for. It is equipment, not one of the
+// two loadout weapons, so the faction rules above (canUse / isValidLoadout) do not apply to it.
+export const GRENADE = {
+  id: 'stielhandgranate',
+  name: 'Stielhandgranate 24',
+  count: 1, // per life
+  fuse: 3.5, // seconds from release
+  speed: 16, // m/s at release
+  loft: 0.18, // rad added above the view direction
+  gravity: 9.81,
+  radius: 0.05,
+  bounce: 0.35,
+  friction: 0.65,
+  windup: 0.3, // seconds from pressing G to release
+  recover: 0.25, // seconds from release until the weapon is drawn again
+  damage: 150,
+  killRadius: 2, // full damage inside this distance
+  blastRadius: 7.5 // no damage beyond this distance
+}
+
+export function blastDamage (distance) {
+  const { damage, killRadius, blastRadius } = GRENADE
+  if (!(distance < blastRadius)) return 0
+  if (distance <= killRadius) return damage
+  return Math.round(damage * (1 - (distance - killRadius) / (blastRadius - killRadius)))
+}
+
+// Quick melee on V. Like the grenade it is equipment every soldier carries, outside the faction-checked loadout.
+export const KNIFE = {
+  id: 'knife',
+  name: { allies: 'M3 Trench Knife', axis: 'Seitengewehr 84/98' },
+  damage: 135,
+  range: 1.5, // metres from the eye to the surface of the target's body
+  cone: 0.6, // rad either side of the view direction
+  windup: 0.14, // seconds from pressing V to the strike
+  recover: 0.38 // seconds from the strike until the weapon is up again
+}
+
+// Every death leaves an ammunition can that anyone, on either side, can walk over to refill their own weapons.
+export const AMMO_DROP = {
+  share: 0.4, // of the class's starting reserve, per weapon
+  lifetime: 30, // seconds on the ground
+  radius: 1.1, // pickup reach in metres
+  max: 40
+}
+
 export const CLASS_IDS = Object.keys(CLASSES)
 export const DEFAULT_CLASS = 'assault'
 export const FACTIONS = ['allies', 'axis']
@@ -716,6 +762,18 @@ export function startingAmmo (cls, id, slot) {
   const w = WEAPONS[id]
   const mul = slot === 'secondary' ? c.secondaryReserveMul : c.reserveMul
   return { mag: w.mag, reserve: Math.round(w.reserve * mul) }
+}
+
+// rounds per weapon one ammo can gives a soldier holding `ammo` (weapon id -> magazine + reserve); never past a full spawn load
+export function ammoPickup (loadout, ammo) {
+  const gain = {}
+  for (const slot of ['primary', 'secondary']) {
+    const id = loadout[slot]
+    const a = startingAmmo(loadout.cls, id, slot)
+    const n = Math.min(Math.ceil(a.reserve * AMMO_DROP.share), a.mag + a.reserve - (ammo[id] ?? 0))
+    if (n > 0) gain[id] = n
+  }
+  return gain
 }
 
 export function damageFor (weapon, distance, zone) {

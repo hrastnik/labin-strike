@@ -1,11 +1,25 @@
 // First-person weapon + arms, rendered in their own scene/camera pass so they never clip into walls.
 import * as THREE from 'three'
-import { WEAPONS } from '@shared/weapons.js'
-import { M, buildViewmodel } from './gunmodels.js'
+import { WEAPONS, GRENADE, KNIFE } from '@shared/weapons.js'
+import { M, buildViewmodel, buildGrenadeViewmodel, buildKnifeViewmodel } from './gunmodels.js'
 
 const UNIFORM = { allies: '#5d6638', axis: '#5a6260' }
 
 const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
+const RELEASE = GRENADE.windup / (GRENADE.windup + GRENADE.recover) // throwFrac at which the grenade leaves the hand
+// throwing hand path: up from below, wound back beside the shoulder, then forward and away
+const NADE_LOW = new THREE.Vector3(0.3, -0.62, -0.45)
+const NADE_BACK = new THREE.Vector3(0.25, -0.17, -0.44)
+const NADE_FWD = new THREE.Vector3(0.08, -0.12, -0.75)
+const NADE_GONE = new THREE.Vector3(0.12, -0.75, -0.6)
+const STRIKE = KNIFE.windup / (KNIFE.windup + KNIFE.recover) // knifeFrac at which the blade connects
+// knife hand keyframes [knifeFrac, position, rotation]: raised on the right, then slashed flat across to the left
+const KNIFE_KEYS = [
+  [0, [0.34, -0.55, -0.38], [0.2, 0.1, -1.3]],
+  [STRIKE * 0.65, [0.26, -0.12, -0.44], [0.6, 0.15, -1.3]],
+  [STRIKE + 0.2, [-0.14, -0.22, -0.52], [-0.1, 0.9, -1.4]],
+  [1, [-0.22, -0.65, -0.42], [-0.3, 1.0, -1.4]]
+]
 
 function flashTexture () {
   const c = document.createElement('canvas')
@@ -67,6 +81,8 @@ export class Viewmodel {
     this.scene.add(this.clipFly.mesh)
 
     this.models = {} // weapon id -> built viewmodel (for the current team's sleeves)
+    this.nadeVM = null
+    this.knifeVM = null
     this.team = null
     this.current = null
     this.bobPhase = 0
@@ -85,6 +101,10 @@ export class Viewmodel {
     for (const m of Object.values(this.models)) this.holder.remove(m.root)
     this.models = {}
     this.current = null
+    if (this.nadeVM) this.holder.remove(this.nadeVM.root)
+    this.nadeVM = null
+    if (this.knifeVM) this.holder.remove(this.knifeVM.root)
+    this.knifeVM = null
   }
 
   model (id) {
@@ -153,8 +173,9 @@ export class Viewmodel {
   }
 
   /**
-   * s: { weapon, ads (0..1), speed, grounded, crouched, reloadFrac (-1 if none), drawFrac (0..1, 1 = holstered),
-   *      cycleFrac (-1 if the bolt is not being worked), reloadSteps, mag (rounds loaded), lookDX, lookDY, dt, alive }
+   * s: { weapon, ads (0..1), sprint (0..1), speed, grounded, crouched, reloadFrac (-1 if none), drawFrac (0..1, 1 = holstered),
+   *      throwFrac (-1 if not throwing), knifeFrac (-1 if not knifing), cycleFrac (-1 if the bolt is not being worked), reloadSteps, mag (rounds loaded),
+   *      lookDX, lookDY, dt, alive }
    */
   update (s) {
     const dt = s.dt
@@ -174,7 +195,7 @@ export class Viewmodel {
     // walk bob
     const moving = Math.min(1, s.speed / 5) * (s.grounded ? 1 : 0)
     this.bobPhase += dt * (5 + s.speed * 1.1) * (moving > 0.05 ? 1 : 0)
-    const bobAmt = moving * (1 - 0.85 * s.ads) * (2 - w.moveMul) // heavy guns sway more
+    const bobAmt = moving * (1 - 0.85 * s.ads) * (2 - w.moveMul) * (1 + s.sprint) // heavy guns sway more
     const bx = Math.sin(this.bobPhase) * 0.011 * bobAmt
     const by = -Math.abs(Math.cos(this.bobPhase)) * 0.009 * bobAmt
     // idle breathing
@@ -197,10 +218,12 @@ export class Viewmodel {
     pos.y += by + breathe - this.landDip * 0.03 + this.sway.y * 0.12 * swayAmt
     pos.z += this.kick * m.kick.z * (1 - 0.4 * s.ads)
     if (s.crouched) { pos.x -= 0.01 * (1 - s.ads); pos.y += 0.004 }
+    // sprint carry: muzzle down and across the chest
+    pos.x -= 0.03 * s.sprint; pos.y -= 0.03 * s.sprint; pos.z += 0.02 * s.sprint
 
-    let rx = this.kick * m.kick.rot * (1 - 0.5 * s.ads) + this.sway.y * swayAmt
-    let ry = this.sway.x * swayAmt + (1 - s.ads) * 0.03
-    let rz = this.sway.x * 0.6 * swayAmt + Math.sin(this.bobPhase) * 0.01 * bobAmt
+    let rx = this.kick * m.kick.rot * (1 - 0.5 * s.ads) + this.sway.y * swayAmt - 0.25 * s.sprint
+    let ry = this.sway.x * swayAmt + (1 - s.ads) * 0.03 + 0.4 * s.sprint
+    let rz = this.sway.x * 0.6 * swayAmt + Math.sin(this.bobPhase) * 0.01 * bobAmt + 0.15 * s.sprint
 
     // reset animated parts, then pose them for this frame
     m.mag.position.copy(m.magRest)
@@ -277,13 +300,17 @@ export class Viewmodel {
       }
     }
 
-    // draw / holster
-    const d = s.drawFrac
+    // draw / holster (the gun also drops out of the way while a grenade is thrown or the knife is out)
+    const tf = s.throwFrac
+    const kf = s.knifeFrac
+    const d = Math.max(s.drawFrac, tf >= 0 ? smooth(0, 0.3, tf) : 0, kf >= 0 ? smooth(0, STRIKE, kf) * (1 - smooth(0.7, 1, kf)) : 0)
     pos.y -= d * d * 0.25
     rx -= d * 0.6
 
     m.root.position.copy(pos)
     m.root.rotation.set(rx, ry, rz)
+    this.poseGrenade(tf)
+    this.poseKnife(kf)
 
     // shells
     for (const sh of this.shells) {
@@ -303,6 +330,48 @@ export class Viewmodel {
       cf.mesh.rotation.x += dt * 14
       if (cf.t <= 0) cf.mesh.visible = false
     }
+  }
+
+  poseGrenade (tf) {
+    if (tf < 0) { if (this.nadeVM) this.nadeVM.root.visible = false; return }
+    if (!this.nadeVM) {
+      this.nadeVM = buildGrenadeViewmodel(UNIFORM[this.team] || UNIFORM.allies)
+      this.nadeVM.root.traverse((o) => { o.frustumCulled = false })
+      this.holder.add(this.nadeVM.root)
+    }
+    const { root, nade } = this.nadeVM
+    root.visible = true
+    if (tf < RELEASE) {
+      const k = smooth(0, 1, tf / RELEASE)
+      root.position.lerpVectors(NADE_LOW, NADE_BACK, k)
+      root.rotation.set(0.05 + 0.3 * k, -0.2, -0.15 * k)
+      nade.visible = true
+    } else {
+      const k = (tf - RELEASE) / (1 - RELEASE)
+      const a = smooth(0, 0.35, k)
+      root.position.lerpVectors(NADE_BACK, NADE_FWD, a).lerp(NADE_GONE, smooth(0.35, 1, k))
+      root.rotation.set(0.35 - 0.8 * a, -0.2, -0.15)
+      nade.visible = false
+    }
+  }
+
+  poseKnife (kf) {
+    if (kf < 0) { if (this.knifeVM) this.knifeVM.root.visible = false; return }
+    if (!this.knifeVM) {
+      this.knifeVM = buildKnifeViewmodel(this.team, UNIFORM[this.team] || UNIFORM.allies)
+      this.knifeVM.root.traverse((o) => { o.frustumCulled = false })
+      this.holder.add(this.knifeVM.root)
+    }
+    const root = this.knifeVM.root
+    root.visible = true
+    let i = 0
+    while (i < KNIFE_KEYS.length - 2 && kf >= KNIFE_KEYS[i + 1][0]) i++
+    const [f0, p0, r0] = KNIFE_KEYS[i]
+    const [f1, p1, r1] = KNIFE_KEYS[i + 1]
+    const k = smooth(f0, f1, kf)
+    const mix = (a, b, j) => a[j] + (b[j] - a[j]) * k
+    root.position.set(mix(p0, p1, 0), mix(p0, p1, 1), mix(p0, p1, 2))
+    root.rotation.set(mix(r0, r1, 0), mix(r0, r1, 1), mix(r0, r1, 2))
   }
 
   render (renderer, fov) {

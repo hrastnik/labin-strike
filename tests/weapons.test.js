@@ -3,8 +3,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   WEAPONS, WEAPON_LIST, WEAPON_CODE, CLASSES, CLASS_IDS, FACTIONS, canUse, sanitizeLoadout, isValidLoadout,
-  startingAmmo, reloadDuration, damageFor
+  GRENADE, KNIFE, AMMO_DROP, startingAmmo, reloadDuration, damageFor, blastDamage, ammoPickup
 } from '../shared/weapons.js'
+import { PLAYER } from '../shared/constants.js'
 
 const REQUIRED = ['name', 'faction', 'category', 'rpm', 'mag', 'reserve', 'reloadTime', 'drawTime', 'damage', 'headMul',
   'legMul', 'falloffStart', 'falloffEnd', 'falloffMin', 'range', 'adsFov', 'moveMul', 'adsTime', 'velocity']
@@ -103,4 +104,31 @@ test('roles: bolt-actions one-shot to the body up close, SMGs fall off fastest',
   }
   for (const id of ['mg42', 'm1919a6', 'bren', 'bar']) assert.ok(WEAPONS[id].moveMul < 0.9, `${id} mobility`)
   for (const id of ['mp40', 'thompson', 'sten', 'm3']) assert.ok(WEAPONS[id].moveMul > 1, `${id} mobility`)
+})
+
+test('grenade blast: lethal up close, falling off to nothing at the edge', () => {
+  assert.equal(blastDamage(0), GRENADE.damage)
+  assert.ok(blastDamage(GRENADE.killRadius) >= PLAYER.maxHealth)
+  let prev = Infinity
+  for (let d = GRENADE.killRadius; d <= GRENADE.blastRadius; d += 0.5) {
+    assert.ok(blastDamage(d) <= prev, `falls off at ${d} m`)
+    prev = blastDamage(d)
+  }
+  assert.equal(blastDamage(GRENADE.blastRadius), 0)
+  for (const bad of [Infinity, NaN, undefined]) assert.equal(blastDamage(bad), 0, String(bad))
+})
+
+test('one knife stab kills', () => {
+  assert.ok(KNIFE.damage >= PLAYER.maxHealth)
+  for (const team of FACTIONS) assert.ok(KNIFE.name[team], team)
+})
+
+test('an ammo can tops each weapon up by a share of its reserve, never past a full load', () => {
+  const l = { cls: 'support', primary: 'mg42', secondary: 'luger' }
+  const pa = startingAmmo(l.cls, l.primary, 'primary')
+  const sa = startingAmmo(l.cls, l.secondary, 'secondary')
+  assert.deepEqual(ammoPickup(l, { mg42: pa.mag + pa.reserve, luger: sa.mag + sa.reserve }), {})
+  const g = ammoPickup(l, { mg42: 0, luger: sa.mag + sa.reserve - 3 })
+  assert.equal(g.mg42, Math.ceil(pa.reserve * AMMO_DROP.share))
+  assert.equal(g.luger, 3)
 })

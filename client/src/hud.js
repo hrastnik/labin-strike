@@ -1,5 +1,6 @@
-// DOM HUD: health, ammo, crosshair, hitmarkers, killfeed, scores/timer, scoreboard, compass minimap.
+// DOM HUD: health, ammo, pickups, crosshair, hitmarkers, killfeed, scores/timer, scoreboard, compass minimap.
 import { WEAPONS, TEAMS, PLAYER } from '@shared/constants.js'
+import { GRENADE, KNIFE } from '@shared/weapons.js'
 
 // compass north in map (x, z) coordinates
 const NORTH_X = -0.8502
@@ -29,7 +30,9 @@ export class Hud {
       ammoMag: $('ammo-mag'),
       ammoReserve: $('ammo-reserve'),
       ammoBullets: $('ammo-bullets'),
+      nades: $('nades'),
       weaponHint: $('weapon-hint'),
+      pickup: $('pickup'),
       death: $('death'),
       deathBy: $('death-by'),
       deathRespawn: $('death-respawn'),
@@ -81,6 +84,11 @@ export class Hud {
       this.el.ammoMag.classList.toggle('low', v <= Math.ceil(w.mag * 0.25))
     })
     this.set('res', a.reserve, (v) => { this.el.ammoReserve.textContent = v })
+    this.set('nades', ws.grenades, (n) => {
+      const html = []
+      for (let i = 0; i < GRENADE.count; i++) html.push(`<i${i >= n ? ' class="spent"' : ''}></i>`)
+      this.el.nades.innerHTML = html.join('')
+    })
     const bkey = `${ws.id}:${a.mag}`
     this.set('bullets', bkey, () => {
       const html = []
@@ -93,6 +101,15 @@ export class Hud {
     else if (a.mag === 0 && a.reserve === 0) hint = 'Out of ammo'
     else if (a.mag <= Math.ceil(w.mag * 0.25)) hint = 'Press R to reload'
     this.set('hint', hint, (v) => { this.el.weaponHint.textContent = v })
+  }
+
+  // gain: weapon id -> rounds picked up
+  pickup (gain) {
+    const el = this.el.pickup
+    el.textContent = Object.entries(gain).map(([id, n]) => `+${n} ${WEAPONS[id]?.name ?? id}`).join('  ·  ')
+    el.classList.remove('show')
+    void el.offsetWidth // restart the fade
+    el.classList.add('show')
   }
 
   // gap in px from spread (radians) and current vertical FOV (degrees)
@@ -157,7 +174,7 @@ export class Hud {
     const d = document.createElement('div')
     d.className = 'kf'
     const name = (p) => p ? `<span class="${p.team}${p.id === myId ? ' me' : ''}">${esc(p.name)}</span>` : '<span>World</span>'
-    const w = WEAPONS[weapon]?.name || weapon
+    const w = weapon === GRENADE.id ? GRENADE.name : weapon === KNIFE.id ? KNIFE.name[killer?.team] ?? 'Knife' : WEAPONS[weapon]?.name || weapon
     if (killer && killer.id !== victim?.id) {
       d.innerHTML = `${name(killer)}<span class="wpn">${esc(w)}</span>${headshot ? '<span class="hs">HEADSHOT</span>' : ''}${name(victim)}`
     } else {

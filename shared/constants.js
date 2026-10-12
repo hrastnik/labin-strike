@@ -30,6 +30,7 @@ export const PLAYER = {
   crouchEye: 1.08,
   walkSpeed: 5.0,
   crouchSpeed: 2.4,
+  sprintMul: 1.45, // forward only, standing, not aiming or firing
   adsSpeedMul: 0.6,
   jumpSpeed: 5.4,
   gravity: 19,

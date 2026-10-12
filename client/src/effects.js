@@ -1,4 +1,4 @@
-// Pooled combat effects: tracers, impact dust/sparks, bullet holes, blood puffs, muzzle light.
+// Pooled combat effects: tracers, impact dust/sparks, bullet holes, blood puffs, muzzle light, grenade blasts.
 import * as THREE from 'three'
 
 const UP = new THREE.Vector3(0, 1, 0)
@@ -57,7 +57,9 @@ export class Effects {
     this.dustMat = new THREE.SpriteMaterial({ map: radialTexture('rgba(200,190,170,0.85)', 'rgba(200,190,170,0)'), transparent: true, depthWrite: false })
     this.sparkMat = new THREE.SpriteMaterial({ map: radialTexture('rgba(255,230,160,1)', 'rgba(255,140,40,0)'), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false })
     this.bloodMat = new THREE.SpriteMaterial({ map: radialTexture('rgba(140,10,8,0.95)', 'rgba(90,0,0,0)'), transparent: true, depthWrite: false })
-    for (let i = 0; i < 160; i++) {
+    this.smokeMat = new THREE.SpriteMaterial({ map: radialTexture('rgba(58,54,48,0.9)', 'rgba(58,54,48,0)'), transparent: true, depthWrite: false })
+    this.fireMat = new THREE.SpriteMaterial({ map: radialTexture('rgba(255,236,180,1)', 'rgba(255,110,20,0)'), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false })
+    for (let i = 0; i < 220; i++) {
       const s = new THREE.Sprite(this.dustMat)
       s.visible = false
       scene.add(s)
@@ -82,6 +84,9 @@ export class Effects {
     this.muzzleLight = new THREE.PointLight(0xffc070, 0, 9, 2)
     scene.add(this.muzzleLight)
     this.muzzleT = 0
+    this.blastLight = new THREE.PointLight(0xffa860, 0, 24, 2)
+    scene.add(this.blastLight)
+    this.blastT = 0
   }
 
   tracer (from, to, speed = 380) {
@@ -141,6 +146,40 @@ export class Effects {
     }
   }
 
+  // scorch: { point, normal } of the ground under the blast, if there is ground close below it
+  explosion (pos, scorch) {
+    const rnd = (k) => (Math.random() - 0.5) * k
+    for (let i = 0; i < 9; i++) {
+      const v = new THREE.Vector3(rnd(5), 1 + Math.random() * 3, rnd(5))
+      this.particle(pos, this.fireMat, { v, life: 0.18 + Math.random() * 0.14, size: 0.9 + Math.random() * 0.6, grow: 0.5 })
+    }
+    for (let i = 0; i < 16; i++) {
+      const v = new THREE.Vector3(rnd(6), 1.5 + Math.random() * 3.5, rnd(6))
+      this.particle(pos, this.smokeMat, { v, life: 1.6 + Math.random() * 1.2, size: 0.7 + Math.random() * 0.5, grow: 0.9, grav: -0.6 })
+    }
+    for (let i = 0; i < 18; i++) {
+      const v = new THREE.Vector3(rnd(2), Math.random() * 0.9 + 0.2, rnd(2)).normalize().multiplyScalar(9 + Math.random() * 9)
+      this.particle(pos, this.sparkMat, { v, life: 0.35 + Math.random() * 0.3, size: 0.06, grow: -0.1, grav: 9 })
+    }
+    for (let i = 0; i < 10; i++) {
+      const v = new THREE.Vector3(rnd(8), Math.random() * 1.5, rnd(8))
+      this.particle(pos, this.dustMat, { v, life: 1 + Math.random() * 0.6, size: 0.5, grow: 1.2, grav: -0.2 })
+    }
+    this.blastLight.position.copy(pos).y += 0.6
+    this.blastLight.intensity = 90
+    this.blastT = 0.3
+    if (scorch) {
+      const n = scorch.normal; const p = scorch.point
+      const h = this.holes[this.holeIdx++ % this.holes.length]
+      h.position.set(p.x + n[0] * 0.01, p.y + n[1] * 0.01, p.z + n[2] * 0.01)
+      h.quaternion.setFromUnitVectors(tmpV.set(0, 0, 1), new THREE.Vector3(n[0], n[1], n[2]))
+      h.rotateZ(Math.random() * Math.PI * 2)
+      const s = 12 + Math.random() * 4
+      h.scale.set(s, s, 1)
+      h.visible = true
+    }
+  }
+
   muzzle (pos) {
     this.muzzleLight.position.copy(pos)
     this.muzzleLight.intensity = 6
@@ -173,6 +212,10 @@ export class Effects {
     if (this.muzzleT > 0) {
       this.muzzleT -= dt
       if (this.muzzleT <= 0) this.muzzleLight.intensity = 0
+    }
+    if (this.blastT > 0) {
+      this.blastT -= dt
+      this.blastLight.intensity = this.blastT > 0 ? 90 * (this.blastT / 0.3) ** 2 : 0
     }
   }
 }

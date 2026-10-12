@@ -1,6 +1,8 @@
 // Server-side TDM bot: patrols via the nav grid, acquires targets by line of sight,
 // tracks them with human-like turn rates / aim error and fires bursts with weapon spread.
 import { PLAYER, WEAPONS } from '../shared/constants.js'
+import { GRENADE, KNIFE } from '../shared/weapons.js'
+import { knifeReach } from '../shared/hitbox.js'
 import { CharacterMotor, lineOfSight } from '../shared/physics.js'
 
 const TAU = Math.PI * 2
@@ -52,6 +54,8 @@ export class Bot {
     this.lastHurtBy = null
     this.lastHurtAt = -1e9
     this.aimHead = false
+    this.nadeRollAt = 0
+    this.knifeReadyAt = 0
   }
 
   dispose () { this.motor.dispose() }
@@ -163,6 +167,7 @@ export class Bot {
       crouch = this.wantCrouch
       let fwd = 0
       if (flat > 38) fwd = 0.7
+      else if (flat < 3 || (this.reloadUntil && flat < 6)) { fwd = 1; this.strafeDir = 0; crouch = false } // close in with the knife
       else if (flat < 6) fwd = -0.6
       const fx = -Math.sin(lookYaw); const fz = -Math.cos(lookYaw)
       const rx = -fz; const rz = fx
@@ -179,9 +184,11 @@ export class Bot {
         wishX = mx * sp; wishZ = mz * sp
       }
       this.path = null
-      this.tryFire(now, tgt, flat, ml > 0.01)
+      if (this.tryKnife(now, tgt, eye)) this.nextShotAt = Math.max(this.nextShotAt, now + KNIFE.recover * 1000)
+      else this.tryFire(now, tgt, flat, ml > 0.01)
     } else {
       this.burstLeft = 0
+      if (active) this.maybeThrowGrenade(now)
       if (!this.reloadUntil && this.mag < w.mag * 0.4) this.reloadUntil = now + w.reloadTime * 1000
       // ----- navigation: last seen target > alert > patrol
       let dest = null
@@ -303,6 +310,45 @@ export class Bot {
       this.reloadUntil = now + w.reloadTime * 1000
       this.burstShots = 0
     }
+  }
+
+  tryKnife (now, tgt, eye) {
+    if (now < this.reactUntil || now < this.knifeReadyAt) return false
+    const h = tgt.crouch ? PLAYER.crouchHeight : PLAYER.height
+    const dx = tgt.pos[0] - eye[0]; const dy = tgt.pos[1] + h * 0.6 - eye[1]; const dz = tgt.pos[2] - eye[2]
+    const len = Math.hypot(dx, dy, dz)
+    const d = [dx / len, dy / len, dz / len]
+    if (knifeReach(eye, d, tgt.pos[0], tgt.pos[1], tgt.pos[2], tgt.crouch).dist > KNIFE.range) return false
+    if (Math.abs(wrap(Math.atan2(-dx, -dz) - this.p.yaw)) > KNIFE.cone) return false
+    this.knifeReadyAt = now + (KNIFE.windup + KNIFE.recover) * 1000 + 150 + Math.random() * 350
+    this.g.knife(this.p, eye, d, tgt)
+    return true
+  }
+
+  // lob the grenade at an enemy who just ducked out of sight
+  maybeThrowGrenade (now) {
+    const p = this.p
+    if (!(p.grenades > 0) || !this.target || !this.lastSeenPos || now < this.nadeRollAt) return
+    const lost = now - this.lastSeenAt
+    if (lost < 700 || lost > 4000) return
+    this.nadeRollAt = now + 5000
+    if (Math.random() > 0.15 + 0.4 * this.skill) return
+    const eye = this.eye()
+    const t = this.lastSeenPos
+    const dx = t[0] - eye[0]; const dz = t[2] - eye[2]
+    const x = Math.hypot(dx, dz) * 0.9 // short: it bounces on
+    if (x < 7 || x > 24) return
+    const y = t[1] + 0.3 - eye[1]
+    const v2 = GRENADE.speed ** 2; const g = GRENADE.gravity
+    const disc = v2 * v2 - g * (g * x * x + 2 * y * v2)
+    if (disc < 0) return
+    const err = 1.3 - this.skill
+    const pitch = Math.atan((v2 - Math.sqrt(disc)) / (g * x)) - GRENADE.loft + (Math.random() - 0.5) * 0.08 * err
+    const yaw = Math.atan2(-dx, -dz) + (Math.random() - 0.5) * 0.1 * err
+    const d = [-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)]
+    if (!lineOfSight(this.g.RAPIER, this.g.world, eye, [eye[0] + d[0] * 2, eye[1] + d[1] * 2, eye[2] + d[2] * 2])) return
+    p.yaw = yaw
+    this.g.throwGrenade(p, eye, d)
   }
 
   setGoal (pos) {

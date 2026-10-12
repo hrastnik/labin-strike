@@ -17,9 +17,11 @@ export const M = {
   woodLight: mat('#86562f', { roughness: 0.6 }), // US walnut
   woodRed: mat('#6b3a22', { roughness: 0.62 }), // German laminate / British beech
   bakelite: mat('#3b2a1e', { roughness: 0.5 }),
+  leather: mat('#6b4a2c', { roughness: 0.7 }),
   skin: mat('#c99a78', { roughness: 0.8 }),
   glove: mat('#3a2f25', { roughness: 0.9 }),
   brass: mat('#c9a043', { metalness: 0.8, roughness: 0.3 }),
+  feldgrau: mat('#565c4b', { metalness: 0.35, roughness: 0.6 }),
   glass: mat('#203040', { metalness: 0.9, roughness: 0.15 })
 }
 
@@ -819,4 +821,90 @@ export function buildViewmodel (id, sleeveColor) {
   spec.root = root
   if (spec.magHidden) spec.mag.visible = false
   return spec
+}
+
+// ------------------------------------------------------------------ Stielhandgranate 24
+
+// stick grenade standing on +Y: wooden handle below, charge head on top; origin near the balance point
+export function buildGrenade () {
+  const g = new THREE.Group()
+  cylY(0.034, 0.1, M.feldgrau, 0, 0.12, 0, g, 10)
+  cylY(0.036, 0.012, M.steelLight, 0, 0.068, 0, g, 10)
+  cylY(0.014, 0.27, M.wood, 0, -0.07, 0, g, 8)
+  cylY(0.016, 0.016, M.steelLight, 0, -0.21, 0, g, 8) // screw cap over the pull cord
+  return g
+}
+
+// right hand holding a grenade by the handle, for the first-person throw
+export function buildGrenadeViewmodel (sleeveColor) {
+  const root = new THREE.Group()
+  const nade = buildGrenade()
+  nade.position.y = 0.06
+  root.add(nade)
+  const h = hand(0, -0.06, 0.022, -Math.PI / 2, M.skin, root)
+  h.rotation.y = Math.PI
+  limb([0.005, -0.1, 0.03], [0.06, -0.3, 0.12], 0.028, 0.036, M.skin, root)
+  limb([0.04, -0.24, 0.09], [0.1, -0.52, 0.2], 0.04, 0.05, makeSleeve(sleeveColor), root)
+  return { root, nade }
+}
+
+// ------------------------------------------------------------------ knives
+
+// flat blade pointing down -Z, edge down, spine up
+function blade (len, width, material, parent) {
+  const s = new THREE.Shape()
+  s.moveTo(0, width / 2)
+  s.lineTo(len * 0.82, width / 2)
+  s.lineTo(len, width * 0.15)
+  s.quadraticCurveTo(len * 0.8, -width / 2, len * 0.55, -width / 2)
+  s.lineTo(0, -width / 2)
+  const g = new THREE.ExtrudeGeometry(s, { depth: 0.004, bevelEnabled: false })
+  g.translate(0, 0, -0.002)
+  g.rotateY(Math.PI / 2)
+  const m = new THREE.Mesh(g, material)
+  parent.add(m)
+  return m
+}
+
+// M3 trench knife (allies) or S84/98 bayonet (axis), blade forward along -Z; origin at the middle of the grip
+export function buildKnife (team) {
+  const g = new THREE.Group()
+  if (team === 'axis') {
+    blade(0.25, 0.024, M.steelLight, g).position.z = -0.062
+    box(0.016, 0.04, 0.012, M.steel, 0, 0.004, -0.058, g) // crossguard
+    box(0.018, 0.03, 0.105, M.woodRed, 0, 0, 0, g)
+    box(0.02, 0.034, 0.025, M.steel, 0, 0.002, 0.064, g) // pommel and bayonet lug
+  } else {
+    blade(0.17, 0.026, M.parker, g).position.z = -0.062
+    box(0.012, 0.055, 0.01, M.parker, 0, -0.004, -0.058, g) // crossguard
+    cylZ(0.013, 0.105, M.leather, 0, 0, 0, g, 8) // stacked leather washers
+    cylZ(0.015, 0.02, M.parker, 0, 0, 0.064, g, 8)
+  }
+  return g
+}
+
+// right fist around the knife grip, for the first-person stab
+export function buildKnifeViewmodel (team, sleeveColor) {
+  const root = new THREE.Group()
+  const knife = buildKnife(team)
+  root.add(knife)
+  const h = hand(0.004, -0.004, 0.004, 0, M.skin, root)
+  h.rotation.z = Math.PI / 2
+  limb([0.012, -0.012, 0.04], [0.09, -0.12, 0.34], 0.028, 0.036, M.skin, root)
+  limb([0.055, -0.07, 0.2], [0.15, -0.3, 0.62], 0.04, 0.05, makeSleeve(sleeveColor), root)
+  return { root, knife }
+}
+
+// ------------------------------------------------------------------ ammunition can
+
+// what a fallen soldier leaves behind; standing on its base at the origin
+export function buildAmmoCan (team) {
+  const g = new THREE.Group()
+  const paint = mat(team === 'axis' ? '#5b6164' : '#55592f', { metalness: 0.35, roughness: 0.6 })
+  box(0.34, 0.17, 0.14, paint, 0, 0.085, 0, g)
+  box(0.35, 0.03, 0.15, paint, 0, 0.18, 0, g) // lid
+  box(0.022, 0.06, 0.155, M.steelLight, 0.13, 0.165, 0, g) // latch
+  box(0.12, 0.012, 0.024, M.black, 0, 0.202, 0, g) // carry handle
+  box(0.342, 0.022, 0.142, mat(team === 'axis' ? '#cfc9b4' : '#c9a834'), 0, 0.12, 0, g) // stencilled band
+  return g
 }

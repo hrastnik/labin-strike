@@ -1,4 +1,4 @@
-// Procedural WebAudio: gunshots (local + spatialised remote), reload/dry clicks, footsteps, hit/kill cues.
+// Procedural WebAudio: gunshots (local + spatialised remote), reload/dry clicks, knife, pickups, footsteps, hit/kill cues.
 // Each weapon's report is shaped by its fx.sound profile in shared/weapons.js.
 import { WEAPONS } from '@shared/weapons.js'
 
@@ -199,6 +199,127 @@ export class Audio {
   }
 
   weaponSwitch () { this.click(1600, 0.2, 0.05); this.click(2400, 0.2, 0.03, 0.12) }
+
+  // unscrewing the cap and pulling the cord
+  nadeWindup () { this.click(1300, 0.25, 0.05); this.click(700, 0.3, 0.09, 0.14) }
+
+  nadeThrow () {
+    if (!this.ctx) return
+    const ctx = this.ctx
+    const t = ctx.currentTime
+    const n = ctx.createBufferSource()
+    n.buffer = this.noise
+    const f = ctx.createBiquadFilter()
+    f.type = 'bandpass'
+    f.Q.value = 1.5
+    f.frequency.setValueAtTime(500, t)
+    f.frequency.exponentialRampToValueAtTime(1400, t + 0.18)
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0.0001, t)
+    g.gain.exponentialRampToValueAtTime(0.22, t + 0.06)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22)
+    n.connect(f); f.connect(g); g.connect(this.master)
+    n.start(t, Math.random(), 0.3)
+  }
+
+  // blade cutting the air; pos null = local
+  knifeSwing (pos = null) {
+    if (!this.ctx) return
+    const ctx = this.ctx
+    const t = ctx.currentTime
+    const n = ctx.createBufferSource()
+    n.buffer = this.noise
+    const f = ctx.createBiquadFilter()
+    f.type = 'bandpass'
+    f.Q.value = 3
+    f.frequency.setValueAtTime(900, t + 0.08)
+    f.frequency.exponentialRampToValueAtTime(3800, t + 0.2)
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0.0001, t + 0.08)
+    g.gain.exponentialRampToValueAtTime(0.3, t + 0.15)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.26)
+    n.connect(f); f.connect(g); g.connect(this.out(pos))
+    n.start(t, Math.random(), 0.3)
+  }
+
+  knifeHit () {
+    if (!this.ctx) return
+    const ctx = this.ctx
+    const t = ctx.currentTime
+    const o = ctx.createOscillator()
+    o.type = 'triangle'
+    o.frequency.setValueAtTime(160, t)
+    o.frequency.exponentialRampToValueAtTime(60, t + 0.12)
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0.6, t)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15)
+    o.connect(g); g.connect(this.master)
+    o.start(t); o.stop(t + 0.18)
+    this.click(700, 0.35, 0.06)
+  }
+
+  // snapping the lid of an ammo can and stuffing the rounds away
+  pickup () { this.click(2400, 0.3, 0.03); this.click(1100, 0.3, 0.06, 0.08); this.click(900, 0.25, 0.08, 0.2) }
+
+  // wooden handle and steel head knocking on the ground; strength 0..1
+  nadeBounce (pos, strength) {
+    if (!this.ctx) return
+    const ctx = this.ctx
+    const t = ctx.currentTime
+    const o = ctx.createOscillator()
+    o.type = 'triangle'
+    o.frequency.setValueAtTime(420 + Math.random() * 160, t)
+    o.frequency.exponentialRampToValueAtTime(180, t + 0.06)
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0.35 * strength, t)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.08)
+    o.connect(g); g.connect(this.out(pos))
+    o.start(t); o.stop(t + 0.1)
+  }
+
+  explosion (pos, dist) {
+    if (!this.ctx || !this.enabled) return
+    const ctx = this.ctx
+    const t = ctx.currentTime
+    const dest = this.out(pos)
+    dest.refDistance = 14 // carries much further than a gunshot
+    const far = Math.min(1, dist / 120)
+
+    // blast front: bright noise that closes down fast
+    const n = ctx.createBufferSource()
+    n.buffer = this.noise
+    const lp = ctx.createBiquadFilter()
+    lp.type = 'lowpass'
+    lp.frequency.setValueAtTime(4500 * (1 - far * 0.85), t)
+    lp.frequency.exponentialRampToValueAtTime(260, t + 0.35)
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0.0001, t)
+    g.gain.exponentialRampToValueAtTime(1.6, t + 0.005)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5 + far * 0.4)
+    n.connect(lp); lp.connect(g); g.connect(dest)
+    n.start(t, Math.random() * 0.5, 1)
+
+    // body: a deep falling thump
+    const o = ctx.createOscillator()
+    o.type = 'sine'
+    o.frequency.setValueAtTime(90, t)
+    o.frequency.exponentialRampToValueAtTime(28, t + 0.5)
+    const og = ctx.createGain()
+    og.gain.setValueAtTime(1.4, t)
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.6)
+    o.connect(og); og.connect(dest)
+    o.start(t); o.stop(t + 0.65)
+
+    // rumble rolling down the street
+    const r = ctx.createBufferSource()
+    r.buffer = this.brown
+    const rg = ctx.createGain()
+    rg.gain.setValueAtTime(0.0001, t)
+    rg.gain.exponentialRampToValueAtTime(1.2 + far * 0.4, t + 0.04)
+    rg.gain.exponentialRampToValueAtTime(0.0001, t + 1.8 + far)
+    r.connect(rg); rg.connect(dest)
+    r.start(t, Math.random() * 0.3, 1.45)
+  }
 
   footstep (pos = null, vol = 0.12) {
     if (!this.ctx) return
