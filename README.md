@@ -107,6 +107,8 @@ DEPLOY_HOST=user@example.com
 DEPLOY_DIR=/srv/labin-strike
 ```
 
+Every push to `main` also deploys automatically: [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) runs the tests, builds the client and calls `deploy.sh`. It reads its settings from the `production` environment (Settings → Environments): the `DEPLOY_SSH_KEY` secret and the `DEPLOY_HOST`, `DEPLOY_DIR` and `DEPLOY_KNOWN_HOSTS` variables. You can also run it by hand from the Actions tab.
+
 Environment variables: `PORT` (default `7344`), `UDP_PORT_MIN` / `UDP_PORT_MAX` (default: same as `PORT`).
 
 ## Rebuilding assets

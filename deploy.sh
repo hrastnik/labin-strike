@@ -61,4 +61,4 @@ done
 curl -fsS "http://127.0.0.1:7344/healthz" >/dev/null
 REMOTE
 
-step "Deployed: http://${DEPLOY_HOST}:7344"
+step "Deployed: http://${DEPLOY_HOST#*@}:7344"

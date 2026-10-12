@@ -1,0 +1,57 @@
+# Tests, builds and deploys the game to the VPS on every push to main (or manually from the Actions tab).
+# Reuses deploy.sh, so CI deploys exactly like a local ./deploy.sh does.
+#
+# Configured on the "production" environment (Settings > Environments), which only main may deploy to:
+#   secret   DEPLOY_SSH_KEY      private key whose public half is in the server's authorized_keys
+#   variable DEPLOY_KNOWN_HOSTS  the server's host key line(s), as printed by `ssh-keyscan <host>`
+#   variable DEPLOY_HOST         e.g. root@example.com
+#   variable DEPLOY_DIR          e.g. /root/labin-strike
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# one deploy at a time; a newer push waits for the running deploy instead of cutting it off mid-restart
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # same major as the server
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run build
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Deploy
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
+          SKIP_BUILD: '1'
+        run: ./deploy.sh
