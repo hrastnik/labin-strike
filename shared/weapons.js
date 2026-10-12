@@ -675,7 +675,7 @@ export const GRENADE = {
   name: 'Stielhandgranate 24',
   count: 1, // per life
   fuse: 3.5, // seconds from pulling the cord; holding G cooks it, and it goes off in the hand when it runs out
-  speed: 16, // m/s at release
+  speed: 18, // m/s at release
   loft: 0.18, // rad added above the view direction
   gravity: 9.81,
   radius: 0.05,
