@@ -349,10 +349,15 @@ export class Avatar {
     } else {
       this.body.rotation.set(0, 0, 0)
       this.body.position.y = 0
-      root.visible = true
+      root.visible = !this.inTank
       if (this.tag) this.tag.visible = true
     }
   }
+
+  get inTank () { return !!(this.flags & 64) }
+
+  // alive and out in the open: what a bullet or a blade can reach
+  get exposed () { return this.alive && !this.inTank }
 
   // hitbox reference point for analytic ray tests
   get hitPos () { return [this.pos.x, this.pos.y, this.pos.z] }

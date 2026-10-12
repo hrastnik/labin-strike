@@ -6,6 +6,7 @@ import { GRENADE, KNIFE } from '../shared/weapons.js'
 import { SD, SD_SITES } from '../shared/modes.js'
 import { knifeReach } from '../shared/hitbox.js'
 import { CharacterMotor, lineOfSight } from '../shared/physics.js'
+import { TANK } from '../shared/tanks.js'
 
 const TAU = Math.PI * 2
 const wrap = (a) => { a = (a + Math.PI) % TAU; return (a < 0 ? a + TAU : a) - Math.PI }
@@ -178,8 +179,11 @@ export class Bot {
         this.strafeUntil = now + 450 + Math.random() * 1100
       }
       crouch = this.wantCrouch
+      // a tank is fought from a distance, with the grenade if there is one
+      const armoured = !!tgt.tank
       let fwd = 0
       if (flat > 38) fwd = 0.7
+      else if (armoured) fwd = flat < 9 ? -0.8 : 0
       else if (flat < 3 || (this.reloadUntil && flat < 6)) { fwd = 1; this.strafeDir = 0; crouch = false } // close in with the knife
       else if (flat < 6) fwd = -0.6
       const fx = -Math.sin(lookYaw); const fz = -Math.cos(lookYaw)
@@ -197,7 +201,10 @@ export class Bot {
         wishX = mx * sp; wishZ = mz * sp
       }
       this.path = null
-      if (this.tryKnife(now, tgt, eye)) this.nextShotAt = Math.max(this.nextShotAt, now + KNIFE.recover * 1000)
+      if (armoured && now >= this.nadeRollAt && this.p.grenades > 0) {
+        this.nadeRollAt = now + 4000
+        this.lob(tgt.pos)
+      } else if (!armoured && this.tryKnife(now, tgt, eye)) this.nextShotAt = Math.max(this.nextShotAt, now + KNIFE.recover * 1000)
       else this.tryFire(now, tgt, flat, ml > 0.01)
     } else {
       this.burstLeft = 0
@@ -261,6 +268,13 @@ export class Bot {
       const dx = p.pos[0] - q.pos[0]; const dz = p.pos[2] - q.pos[2]
       const d = Math.hypot(dx, dz)
       if (d < 1.1 && d > 0.001) { wishX += (dx / d) * 2.5 * (1.1 - d); wishZ += (dz / d) * 2.5 * (1.1 - d) }
+    }
+    // and steer round the tanks, which the nav grid knows nothing about
+    for (const t of this.g.tanks.list) {
+      const dx = p.pos[0] - t.pos[0]; const dz = p.pos[2] - t.pos[2]
+      const d = Math.hypot(dx, dz)
+      const r = TANK.half[1] + 1.2
+      if (d < r && d > 0.001) { wishX += (dx / d) * 3 * (r - d); wishZ += (dz / d) * 3 * (r - d) }
     }
 
     // stuck detection
@@ -362,8 +376,13 @@ export class Bot {
     if (lost < 700 || lost > 4000) return
     this.nadeRollAt = now + 5000
     if (Math.random() > 0.15 + 0.4 * this.skill) return
+    this.lob(this.lastSeenPos)
+  }
+
+  // throws the grenade to land short of t and bounce on, if t is in throwing range and the way out is clear
+  lob (t) {
+    const p = this.p
     const eye = this.eye()
-    const t = this.lastSeenPos
     const dx = t[0] - eye[0]; const dz = t[2] - eye[2]
     const x = Math.hypot(dx, dz) * 0.9 // short: it bounces on
     if (x < 7 || x > 24) return

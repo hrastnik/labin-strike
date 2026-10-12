@@ -14,6 +14,7 @@
     <div id="scope" class="hidden"><div class="lens"><i class="h"></i><i class="v"></i><i class="post"></i></div></div>
     <div id="vignette"></div>
     <div id="damage-dirs"></div>
+    <div id="gun-mark"></div>
     <div id="crosshair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i></div>
     <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
     <div id="target-name"></div>
@@ -37,7 +38,7 @@
       <div class="compass-wrap">
         <canvas id="compass" width="200" height="200"></canvas>
       </div>
-      <div id="health"><div class="label">HEALTH</div><div class="bar"><div class="fill" id="health-fill"></div></div><div class="num" id="health-num">100</div></div>
+      <div id="health"><div class="label" id="health-label">HEALTH</div><div class="bar"><div class="fill" id="health-fill"></div></div><div class="num" id="health-num">100</div></div>
     </div>
 
     <div id="bottom-right">
@@ -58,7 +59,7 @@
 
     <div id="scoreboard" class="hidden"></div>
     <div id="netstat"></div>
-    <div id="pause" class="hidden"><div class="box"><div class="title">Paused</div><div>Click to return to the fight</div><div class="pause-actions"><button id="btn-loadout" class="ghost">Change loadout <kbd>B</kbd></button><button id="btn-bots" class="ghost">Bots: on</button><button id="btn-mode" class="ghost">Mode: TDM</button><button id="btn-leave" class="ghost">Leave match</button></div></div></div>
+    <div id="pause" class="hidden"><div class="box"><div class="title">Paused</div><div>Click to return to the fight</div><div class="pause-actions"><button id="btn-loadout" class="ghost">Change loadout <kbd>B</kbd></button><button id="btn-bots" class="ghost">Bots: on</button><button id="btn-tanks" class="ghost">Tanks: off</button><button id="btn-mode" class="ghost">Mode: TDM</button><button id="btn-leave" class="ghost">Leave match</button></div></div></div>
   </div>
 
   <div id="loadout" class="hidden">
@@ -120,7 +121,7 @@
         <div><kbd>R</kbd> reload</div><div><kbd>1</kbd>/<kbd>2</kbd>/<kbd>Q</kbd> weapons</div>
         <div><kbd>Tab</kbd> scores</div><div><kbd>Esc</kbd> pause</div>
         <div><kbd>V</kbd> knife</div><div><kbd>B</kbd> loadout</div>
-        <div><kbd>F</kbd> plant / defuse (S&amp;D)</div>
+        <div><kbd>F</kbd> plant / defuse (S&amp;D)</div><div><kbd>E</kbd> get in / out of a tank</div>
       </div>
     </div>
     <div class="menu-credit">Map reconstructed from street-level references of Rudarska ulica, Labin</div>

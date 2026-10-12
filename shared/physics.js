@@ -7,10 +7,13 @@ export const G_SOLID = 0x0001
 export const G_CLIP = 0x0002
 export const G_BULLET = 0x0004
 export const G_CHAR = 0x0008
+export const G_TANK = 0x0010
 export const SOLID_GROUPS = groups(G_SOLID, 0xffff)
 export const CLIP_GROUPS = groups(G_CLIP, 0xffff)
-export const BULLET_QUERY = groups(G_BULLET, G_SOLID) // bullets only hit solid geometry
-export const CHAR_GROUPS = groups(G_CHAR, G_SOLID | G_CLIP) // characters ignore each other
+export const BULLET_QUERY = groups(G_BULLET, G_SOLID) // bullets only hit solid geometry (tanks are hit-tested in tanks.js)
+export const CHAR_GROUPS = groups(G_CHAR, G_SOLID | G_CLIP | G_TANK) // characters ignore each other
+export const TANK_GROUPS = groups(G_TANK, 0xffff)
+export const TANK_QUERY = groups(G_TANK, G_SOLID | G_CLIP | G_TANK) // tanks drive through soldiers (and crush enemies)
 
 export function buildMapWorld (RAPIER, mapData) {
   const world = new RAPIER.World({ x: 0, y: 0, z: 0 })

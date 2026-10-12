@@ -1,8 +1,9 @@
 // DOM HUD: health, ammo, pickups, crosshair, hitmarkers, killfeed, scores/timer, scoreboard, compass minimap,
-// and the Search and Destroy round line, site markers and plant / defuse bar.
+// the Search and Destroy round line, site markers and plant / defuse bar, and the tank's armour, gun and gun sight.
 import { WEAPONS, TEAMS, PLAYER } from '@shared/constants.js'
 import { GRENADE, KNIFE } from '@shared/weapons.js'
 import { MODES, SD } from '@shared/modes.js'
+import { TANK } from '@shared/tanks.js'
 
 // compass north in map (x, z) coordinates
 const NORTH_X = -0.8502
@@ -34,6 +35,8 @@ export class Hud {
       compass: $('compass'),
       healthFill: $('health-fill'),
       healthNum: $('health-num'),
+      healthLabel: $('health-label'),
+      gunMark: $('gun-mark'),
       weaponName: $('weapon-name'),
       ammoMag: $('ammo-mag'),
       ammoReserve: $('ammo-reserve'),
@@ -75,14 +78,16 @@ export class Hud {
     document.querySelectorAll('#topbar .team').forEach((e) => e.classList.toggle('mine', e.classList.contains(team)))
   }
 
-  health (hp, alive) {
+  // max, label: the tank's armour while driving
+  health (hp, alive, max = PLAYER.maxHealth, label = 'HEALTH') {
     const v = Math.max(0, Math.round(hp))
-    this.set('hp', v, () => {
+    this.set('hplabel', label, (l) => { this.el.healthLabel.textContent = l })
+    this.set('hp', `${v}/${max}`, () => {
       this.el.healthNum.textContent = v
-      this.el.healthFill.style.width = `${v}%`
-      this.el.healthFill.classList.toggle('low', v <= 35)
+      this.el.healthFill.style.width = `${(v / max) * 100}%`
+      this.el.healthFill.classList.toggle('low', v <= max * 0.35)
     })
-    const pain = alive ? Math.max(0, 1 - hp / 70) : 0
+    const pain = alive && max === PLAYER.maxHealth ? Math.max(0, 1 - hp / 70) : 0
     const op = Math.min(1, pain * 0.9 + this.flashT * 2.2)
     this.set('vig', op.toFixed(2), (s) => { this.el.vignette.style.opacity = s })
   }
@@ -119,6 +124,28 @@ export class Hud {
     else if (a.mag === 0 && a.reserve === 0) hint = 'Out of ammo'
     else if (a.mag <= Math.ceil(w.mag * 0.25)) hint = 'Press R to reload'
     this.set('hint', hint, (v) => { this.el.weaponHint.textContent = v })
+  }
+
+  // the tank's gun in place of the weapon panel; gun: its name, or null on foot. ready: 0..1 through the reload
+  tankGun (gun, ready = 1) {
+    this.set('driving', !!gun, (v) => {
+      this.el.hud.classList.toggle('driving', v)
+      if (!v) { this.last.wname = this.last.hint = this.last.mag = this.last.res = undefined }
+    })
+    if (!gun) return
+    this.set('wname', gun, (v) => { this.el.weaponName.textContent = v })
+    const left = ready < 1 ? `Loading ${Math.round(ready * 100)}%` : 'Ready'
+    this.set('mag', left, (v) => { this.el.ammoMag.textContent = v; this.el.ammoMag.classList.toggle('low', ready < 1) })
+    this.set('hint', 'E to get out', (v) => { this.el.weaponHint.textContent = v })
+  }
+
+  // where the gun actually points, in screen px (null when off screen); ready: loaded
+  gunSight (x, y, ready) {
+    const el = this.el.gunMark
+    this.set('gunmark', x != null, (v) => el.classList.toggle('show', v))
+    if (x == null) return
+    this.set('gunready', ready, (v) => el.classList.toggle('ready', v))
+    el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`
   }
 
   // gain: weapon id -> rounds picked up
@@ -232,7 +259,8 @@ export class Hud {
     d.className = 'kf'
     const name = (p) => p ? `<span class="${p.team}${p.id === myId ? ' me' : ''}">${esc(p.name)}</span>` : '<span>World</span>'
     const w = weapon === GRENADE.id ? GRENADE.name : weapon === KNIFE.id ? KNIFE.name[killer?.team] ?? 'Knife'
-      : weapon === SD.bomb.id ? SD.bomb.name : WEAPONS[weapon]?.name || weapon
+      : weapon === SD.bomb.id ? SD.bomb.name : weapon === TANK.gunId ? TANK.sides[killer?.team]?.gunName ?? 'Tank gun'
+        : weapon === TANK.crushId ? 'Tracks' : WEAPONS[weapon]?.name || weapon
     if (killer && killer.id !== victim?.id) {
       d.innerHTML = `${name(killer)}<span class="wpn">${esc(w)}</span>${headshot ? '<span class="hs">HEADSHOT</span>' : ''}${name(victim)}`
     } else {
@@ -334,7 +362,8 @@ export class Hud {
       if (r > maxR) { if (!p.friendly) continue; sx *= maxR / r; sy *= maxR / r }
       g.fillStyle = p.friendly ? '#9fd36a' : '#ff4b3a'
       g.beginPath()
-      g.arc(S / 2 + sx, S / 2 + sy, p.friendly ? 4 : 5, 0, Math.PI * 2)
+      if (p.tank) g.rect(S / 2 + sx - 7, S / 2 + sy - 7, 14, 14)
+      else g.arc(S / 2 + sx, S / 2 + sy, p.friendly ? 4 : 5, 0, Math.PI * 2)
       g.fill()
       g.strokeStyle = 'rgba(0,0,0,.7)'
       g.lineWidth = 1.5

@@ -28,6 +28,7 @@ Features:
 - A knife on <kbd>V</kbd> (M3 trench knife or S84/98 bayonet): one stab kills at arm's length. Bots use it up close, and they move in for it while reloading
 - Every death, friendly or enemy, leaves an ammo can under the body for 30 s. Walk over it to refill your own weapons' reserve, up to what you spawned with
 - Health regenerates COD2-style after 5 s without taking damage
+- Tanks, switched on from the pause screen: one per side per match, an M4 Sherman for the Allies and a Panzer IV for the Axis, parked near each side's spawn. Walk up to your own side's tank and press <kbd>E</kbd> to drive it from a chase camera: <kbd>W</kbd><kbd>S</kbd> throttle, <kbd>A</kbd><kbd>D</kbd> turn the hull, the turret follows the mouse, and <kbd>LMB</kbd> fires a high-explosive shell (4 s reload). A tank has 600 armour: rifles and machine guns barely scratch it, grenades, shells and the S&D bomb are what kill it. It runs over enemies, and the crew goes down with it. A destroyed tank stays a smoking wreck until the next match. Bots shoot at enemy tanks and lob their grenades at them
 - Three cats roam the map in place of Counter-Strike's chickens: the main developer's blue-cream tabby plus a ginger and a tuxedo. They meow, flop over on the pavement, and hiss and bolt when you get too close, shoot near them or throw a grenade. Crouch to sneak up on one
 - Server-side bots fill the match up to 8 players. They use A* pathfinding, line-of-sight targeting and human-like aim error
 - Killfeed, compass/minimap, hitmarkers, damage direction indicators
@@ -60,7 +61,7 @@ Handy URL params: `?name=Mateo` pre-fills the callsign, `?team=axis` picks a sid
 | <kbd>R</kbd> | Reload | <kbd>1</kbd> / <kbd>2</kbd> / <kbd>Q</kbd> | Rifle / pistol / last weapon |
 | <kbd>Tab</kbd> | Scoreboard | <kbd>Esc</kbd> | Pause |
 | <kbd>V</kbd> | Knife | <kbd>B</kbd> | Loadout / switch side |
-| <kbd>F</kbd> (hold) | Plant / defuse (Search and Destroy) | | |
+| <kbd>F</kbd> (hold) | Plant / defuse (Search and Destroy) | <kbd>E</kbd> | Get in / out of your side's tank |
 
 ## How it works
 
@@ -78,6 +79,7 @@ tools/    Blender build scripts for the map and cars, texture/sky generators
 - **Cats.** Where Counter-Strike has chickens, Rudarska ulica has the main developer's cats. `server/cats.js` walks them around the nav grid, lets them stop to look around or lie down, and sends them running from soldiers who come close (crouch to sneak up), from bullets passing near them and from grenades. Nobody can hurt them. They ride along in the snapshots, and `client/src/cats.js` animates the Blender model with code: legs, head and tail each have their own pivot.
 - **Hits.** Players have a head sphere plus body and leg capsules, defined in `shared/hitbox.js`. The client claims a hit, and the server checks the shooter's position, the target's position and line of sight before applying damage.
 - **Search and Destroy.** `server/sd.js` runs the rounds: one spawn each (joiners still get in during the first 15 s), the round and bomb timers, elimination and halftime. Planting and defusing are timed on the server while the client holds the use key and stays put, so a client cannot shorten them. The four bomb sites in `shared/modes.js` were placed with the nav grid so the defenders reach a site in about half the attackers' time.
+- **Tanks.** The driver's client moves the tank with the same Rapier character controller the soldiers use, fitted with a box (`TankBody` in `shared/tanks.js`), and reports its pose like a player does. The server checks the speed and keeps the tank's collider in its own world, so soldiers and bots walk into it. The server fires the shells from its own copy of the turret, settles the armour (hull and turret boxes, tested analytically like the hitboxes), crushes enemies under a moving hull, and parks each side's tank on open ground near its spawns (`server/tanks.js`).
 - **Map.** Colliders, spawns and car markers are stored as named nodes inside `parking_lot.glb`. Server and client both read them with `shared/mapdata.js`. The server bakes a 0.5 m walkability grid from the map at startup to give bots their pathfinding.
 - **Cars.** Parked cars are instanced from `cars.glb`. Each model costs three draw calls per LOD (paint, opaque, glass), however many copies are on the map.
 
@@ -104,7 +106,7 @@ Sidearms: Walther P38 and Luger P08 (Axis), M1911 and Webley Mk VI (Allies).
 ## Tests
 
 ```bash
-npm test             # weapon catalogue, faction rules, grenades, the server's loadout / fire / team / movement validation, and Search and Destroy rounds
+npm test             # weapon catalogue, faction rules, grenades, the server's loadout / fire / team / movement validation, Search and Destroy rounds, and tanks
 ```
 
 ## Production
@@ -148,6 +150,8 @@ The car models are built with `tools/blender/cars/` and exported to `client/publ
 # Cats → client/public/assets/cats/cats.glb (add `-- --preview /tmp/cats.png` for a still of every coat)
 /Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup --python tools/blender/cats/build.py
 ```
+
+The tanks are Quaternius's low-poly tanks from [Poly Pizza](https://poly.pizza/u/Quaternius), released under CC0 and used unchanged as `client/public/assets/tanks/sherman.glb` and `panzer.glb`. `shared/tanks.js` holds their measured hull and turret sizes at the 0.36 scale the client draws them at.
 
 `node tools/test/run_straight.mjs` is a movement check. It runs the character motor across the map in straight lines and reports places where you would snag on open ground.
 

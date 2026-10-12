@@ -180,6 +180,35 @@ export class Effects {
     }
   }
 
+  // a bullet glancing off armour: sparks, no decal (the tank moves on)
+  sparks (pos, normal) {
+    for (let i = 0; i < 5; i++) {
+      const v = new THREE.Vector3(normal[0] + (Math.random() - 0.5) * 1.5, normal[1] + Math.random(), normal[2] + (Math.random() - 0.5) * 1.5).multiplyScalar(3 + Math.random() * 4)
+      this.particle(pos, this.sparkMat, { v, life: 0.2, size: 0.05, grow: -0.1, grav: 9 })
+    }
+  }
+
+  // a tank gun going off: flame and a ring of smoke thrown out from the muzzle
+  gunBlast (pos, dir) {
+    for (let i = 0; i < 6; i++) {
+      const v = new THREE.Vector3(dir.x, dir.y, dir.z).multiplyScalar(6 + Math.random() * 6).add(new THREE.Vector3((Math.random() - 0.5) * 2, Math.random(), (Math.random() - 0.5) * 2))
+      this.particle(pos, this.fireMat, { v, life: 0.12 + Math.random() * 0.08, size: 0.6 + Math.random() * 0.4, grow: 0.6 })
+    }
+    for (let i = 0; i < 10; i++) {
+      const v = new THREE.Vector3(dir.x, dir.y, dir.z).multiplyScalar(2 + Math.random() * 4).add(new THREE.Vector3((Math.random() - 0.5) * 3, Math.random() * 1.2, (Math.random() - 0.5) * 3))
+      this.particle(pos, this.smokeMat, { v, life: 1.2 + Math.random() * 0.8, size: 0.6, grow: 0.9, grav: -0.4 })
+    }
+    this.muzzleLight.position.copy(pos)
+    this.muzzleLight.intensity = 40
+    this.muzzleT = 0.08
+  }
+
+  // one puff from a burning wreck
+  smoke (pos) {
+    const v = new THREE.Vector3((Math.random() - 0.5) * 0.6, 1.2 + Math.random(), (Math.random() - 0.5) * 0.6)
+    this.particle(pos, this.smokeMat, { v, life: 2.5 + Math.random() * 1.5, size: 0.8, grow: 1.2, grav: -0.3 })
+  }
+
   muzzle (pos) {
     this.muzzleLight.position.copy(pos)
     this.muzzleLight.intensity = 6

@@ -39,6 +39,7 @@ export class SearchAndDestroy {
     const sites = SD_SITES[this.defenders]
     this.target = sites[Math.floor(Math.random() * sites.length)].id
     g.clearField()
+    g.tanks.roundReset()
     for (const p of g.players.values()) { p.alive = false; p.useOn = false; p.act = null }
     for (const p of g.players.values()) if (p.deployed) g.spawn(p)
     if (this.round === SD.halftime + 1) g.emitAll('notice', { m: 'Halftime: the sides swap roles' }, true)
@@ -78,6 +79,7 @@ export class SearchAndDestroy {
   }
 
   actionFor (p) {
+    if (p.tank) return null
     if (p.team === this.attackers && !this.bomb) {
       const site = sdSiteAt(this.defenders, p.pos)
       return site && { kind: 'plant', site: site.id }
@@ -142,10 +144,11 @@ export class SearchAndDestroy {
     const by = g.players.get(b.by) ?? { id: 0, team: this.attackers, pos: b.pos, isBot: true, kills: 0 }
     const c = [b.pos[0], b.pos[1] + 0.5, b.pos[2]]
     for (const q of [...g.players.values()]) {
-      if (!q.alive) continue
+      if (!q.alive || q.tank) continue
       const dmg = bombDamage(Math.hypot(q.pos[0] - c[0], q.pos[1] + 1 - c[1], q.pos[2] - c[2]))
       if (dmg > 0) g.applyDamage(q, by, dmg, SD.bomb.id, 'body', c)
     }
+    g.tanks.blast(c, by, this.attackers, bombDamage, SD.bomb.id)
     this.endRound(this.attackers, 'bomb')
   }
 
