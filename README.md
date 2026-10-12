@@ -22,6 +22,7 @@ A browser-based, low-poly multiplayer team deathmatch shooter set on **Rudarska 
 - A knife on <kbd>V</kbd> (M3 trench knife or S84/98 bayonet): one stab kills at arm's length. Bots use it up close, and they move in for it while reloading
 - Every death, friendly or enemy, leaves an ammo can under the body for 30 s. Walk over it to refill your own weapons' reserve, up to what you spawned with
 - Health regenerates COD2-style after 5 s without taking damage
+- Three cats roam the map in place of Counter-Strike's chickens: the main developer's blue-cream tabby plus a ginger and a tuxedo. They meow, flop over on the pavement, and hiss and bolt when you get too close, shoot near them or throw a grenade. Crouch to sneak up on one
 - Server-side bots fill the match up to 8 players. They use A* pathfinding, line-of-sight targeting and human-like aim error
 - Killfeed, compass/minimap, hitmarkers, damage direction indicators
 
@@ -67,6 +68,7 @@ tools/    Blender build scripts for the map and cars, texture/sky generators
 - **Physics.** [Rapier](https://rapier.rs/) runs the same kinematic character motor on both sides: the client for the local player, the server for bots. Movement collides identically everywhere.
 - **Grenades.** `shared/grenade.js` steps the flight (gravity, bounces off solid geometry) at a fixed 60 Hz. The server runs it to place the blast and deal damage: full damage within 2 m, nothing past 7.5 m, only to body parts it can see, never to teammates, but to the thrower. Clients replay the same throw so their visual follows the server's path until the `boom` message arrives.
 - **Knife and ammo cans.** The client picks who its stab reaches, and the server re-checks reach, angle and line of sight with some slack for latency (`knifeReach` in `shared/hitbox.js`). The server also places the ammo cans, gives each one to the first soldier over it who is short of ammunition, and removes them when they expire. Clients only draw them.
+- **Cats.** Where Counter-Strike has chickens, Rudarska ulica has the main developer's cats. `server/cats.js` walks them around the nav grid, lets them stop to look around or lie down, and sends them running from soldiers who come close (crouch to sneak up), from bullets passing near them and from grenades. Nobody can hurt them. They ride along in the snapshots, and `client/src/cats.js` animates the Blender model with code: legs, head and tail each have their own pivot.
 - **Hits.** Players have a head sphere plus body and leg capsules, defined in `shared/hitbox.js`. The client claims a hit, and the server checks the shooter's position, the target's position and line of sight before applying damage.
 - **Map.** Colliders, spawns and car markers are stored as named nodes inside `parking_lot.glb`. Server and client both read them with `shared/mapdata.js`. The server bakes a 0.5 m walkability grid from the map at startup to give bots their pathfinding.
 - **Cars.** Parked cars are instanced from `cars.glb`. Each model costs three draw calls per LOD (paint, opaque, glass), however many copies are on the map.
@@ -133,6 +135,11 @@ python3 tools/sky_src/grade_sky.py
 ```
 
 The car models are built with `tools/blender/cars/` and exported to `client/public/assets/cars/cars.glb` by `export.py`.
+
+```bash
+# Cats → client/public/assets/cats/cats.glb (add `-- --preview /tmp/cats.png` for a still of every coat)
+/Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup --python tools/blender/cats/build.py
+```
 
 `node tools/test/run_straight.mjs` is a movement check. It runs the character motor across the map in straight lines and reports places where you would snag on open ground.
 

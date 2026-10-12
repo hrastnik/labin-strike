@@ -1,5 +1,5 @@
 // Drives the real authoritative Game through fake channels: loadout validation, faction restrictions,
-// ammunition, team switching, bot loadouts, grenades, sprint movement, ammo drops and the knife.
+// ammunition, team switching, bot loadouts, grenades, sprint movement, ammo drops, the knife and the cats.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import path from 'node:path'
@@ -9,6 +9,7 @@ import { MATCH, PLAYER } from '../shared/constants.js'
 import { WEAPONS, WEAPON_LIST, GRENADE, KNIFE, AMMO_DROP, CLASS_IDS, isValidLoadout, startingAmmo, sanitizeLoadout } from '../shared/weapons.js'
 import { NADE_DT, createGrenade, stepGrenade } from '../shared/grenade.js'
 import { lineOfSight } from '../shared/physics.js'
+import { CAT, CAT_STATE, CAT_COATS } from '../server/cats.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -472,5 +473,57 @@ test('bots knife an enemy standing in front of them, and humans see the stab', (
   assert.equal(ch.last('kill').w, KNIFE.id)
   assert.equal(ch.last('kill').k, bot.id)
   assert.equal(ch.last('stab').id, bot.id)
+  ch.disconnect()
+})
+
+test('cats wander the map on their own and show up in snapshots', () => {
+  const ch = connect('Tango', { team: 'allies' })
+  const start = game.cats.list.map((c) => c.pos.slice())
+  // a cat with nothing to do mostly goes for a stroll somewhere nearby
+  for (const c of game.cats.list) for (let i = 0; i < 50 && c.state !== CAT_STATE.walk; i++) game.cats.decide(c, clock)
+  assert.ok(game.cats.list.every((c) => c.state === CAT_STATE.walk))
+  for (const c of game.cats.list) c.calmAt = 0
+  for (let i = 0; i < 200; i++) { clock += 33; game.cats.move.call(game.cats, game.cats.list[0], 0.033, clock) }
+  assert.ok(Math.hypot(game.cats.list[0].pos[0] - start[0][0], game.cats.list[0].pos[2] - start[0][2]) > 0.5, 'went for a stroll')
+  for (const c of game.cats.list) assert.ok(game.nav.isWalkable(c.pos[0], c.pos[2]) || game.nav.nearestWalkable(c.pos[0], c.pos[2], 1) >= 0, 'on walkable ground')
+  game.broadcastSnapshot()
+  const snap = ch.last('snap')
+  assert.equal(snap.c.length, CAT_COATS.length)
+  assert.deepEqual(snap.c.map((r) => r[1]).sort(), CAT_COATS.map((_, i) => i))
+  ch.disconnect()
+})
+
+test('cats bolt from a soldier walking up, a passing bullet and a grenade, but let a crouching one creep close', () => {
+  const ch = connect('Uniform', { team: 'axis' })
+  const p = deploy(ch, { cls: 'assault', primary: 'mp40', secondary: 'p38' })
+  const cat = game.cats.list[0]
+  // the bots are lifted out of the way so only this soldier is near the cat
+  const others = [...game.players.values()].filter((q) => q !== p && q.alive)
+  for (const q of others) q.pos[1] += 40
+  const calm = () => Object.assign(cat, { state: CAT_STATE.lie, until: Infinity, path: null, calmAt: 0 })
+  cat.pos = p.pos.slice()
+  const d = openDirection(cat.pos, 4)
+
+  calm()
+  p.crouch = true
+  p.pos = [cat.pos[0] + d[0] * 1.5, cat.pos[1], cat.pos[2] + d[2] * 1.5]
+  game.cats.update(1 / 30, clock)
+  assert.equal(cat.state, CAT_STATE.lie, 'a crouching soldier can sneak up')
+  p.crouch = false
+  game.cats.update(1 / 30, clock)
+  assert.equal(cat.state, CAT_STATE.run, 'standing up at arm\'s length scares it')
+  const from = Math.hypot(cat.path.at(-1)[0] - p.pos[0], cat.path.at(-1)[2] - p.pos[2])
+  assert.ok(from > CAT.personal * 2, `runs well away (${from.toFixed(1)} m)`)
+
+  p.pos[1] += 40 // out of the way
+  calm()
+  game.cats.hearShot([cat.pos[0] - 20, cat.pos[1] + 1, cat.pos[2] + 1], [cat.pos[0] + 20, cat.pos[1] + 1, cat.pos[2] + 1])
+  assert.equal(cat.state, CAT_STATE.run, 'a bullet whizzing past')
+  calm()
+  game.cats.hearShot([cat.pos[0] - 20, cat.pos[1] + 1, cat.pos[2] + 10], [cat.pos[0] + 20, cat.pos[1] + 1, cat.pos[2] + 10])
+  assert.equal(cat.state, CAT_STATE.lie, 'shots far off are ignored')
+  game.explode({ owner: p.id, team: p.team, k: 0, pos: [cat.pos[0] + 5, cat.pos[1], cat.pos[2]] })
+  assert.equal(cat.state, CAT_STATE.run, 'a grenade going off')
+  for (const q of others) q.pos[1] -= 40
   ch.disconnect()
 })

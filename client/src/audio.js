@@ -1,4 +1,4 @@
-// Procedural WebAudio: gunshots (local + spatialised remote), reload/dry clicks, knife, pickups, footsteps, hit/kill cues.
+// Procedural WebAudio: gunshots (local + spatialised remote), reload/dry clicks, knife, pickups, footsteps, hit/kill cues, cats.
 // Each weapon's report is shaped by its fx.sound profile in shared/weapons.js.
 import { WEAPONS } from '@shared/weapons.js'
 
@@ -256,6 +256,56 @@ export class Audio {
     o.connect(g); g.connect(this.master)
     o.start(t); o.stop(t + 0.18)
     this.click(700, 0.35, 0.06)
+  }
+
+  // a cat somewhere nearby: a voiced sweep through two formants, "mi-aow"
+  meow (pos) {
+    if (!this.ctx) return
+    const ctx = this.ctx
+    const t = ctx.currentTime
+    const dur = 0.45 + Math.random() * 0.35
+    const f0 = 480 + Math.random() * 220
+    const o = ctx.createOscillator()
+    o.type = 'sawtooth'
+    o.frequency.setValueAtTime(f0, t)
+    o.frequency.linearRampToValueAtTime(f0 * 1.35, t + dur * 0.35)
+    o.frequency.linearRampToValueAtTime(f0 * 0.8, t + dur)
+    const out = ctx.createGain()
+    out.gain.setValueAtTime(0.0001, t)
+    out.gain.exponentialRampToValueAtTime(0.35, t + 0.06)
+    out.gain.setValueAtTime(0.35, t + dur * 0.6)
+    out.gain.exponentialRampToValueAtTime(0.0001, t + dur)
+    // "ee" opening to "ow"
+    for (const [from, to, q, g] of [[2600, 1100, 6, 0.6], [900, 700, 4, 1]]) {
+      const f = ctx.createBiquadFilter()
+      f.type = 'bandpass'
+      f.Q.value = q
+      f.frequency.setValueAtTime(from, t)
+      f.frequency.exponentialRampToValueAtTime(to, t + dur * 0.7)
+      const fg = ctx.createGain()
+      fg.gain.value = g
+      o.connect(f); f.connect(fg); fg.connect(out)
+    }
+    out.connect(this.out(pos))
+    o.start(t); o.stop(t + dur + 0.05)
+  }
+
+  // a startled cat
+  hiss (pos) {
+    if (!this.ctx) return
+    const ctx = this.ctx
+    const t = ctx.currentTime
+    const n = ctx.createBufferSource()
+    n.buffer = this.noise
+    const f = ctx.createBiquadFilter()
+    f.type = 'highpass'
+    f.frequency.value = 2800
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0.0001, t)
+    g.gain.exponentialRampToValueAtTime(0.4, t + 0.04)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5)
+    n.connect(f); f.connect(g); g.connect(this.out(pos))
+    n.start(t, Math.random(), 0.55)
   }
 
   // snapping the lid of an ammo can and stuffing the rounds away
