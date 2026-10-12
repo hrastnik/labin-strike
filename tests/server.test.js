@@ -479,12 +479,11 @@ test('bots knife an enemy standing in front of them, and humans see the stab', (
 test('cats wander the map on their own and show up in snapshots', () => {
   const ch = connect('Tango', { team: 'allies' })
   const start = game.cats.list.map((c) => c.pos.slice())
-  const rnd = Math.random
-  Math.random = () => 0.3 // a roll that means "go for a walk"
-  try { for (const c of game.cats.list) game.cats.decide(c, clock) } finally { Math.random = rnd }
+  // a cat with nothing to do mostly goes for a stroll somewhere nearby
+  for (const c of game.cats.list) for (let i = 0; i < 50 && c.state !== CAT_STATE.walk; i++) game.cats.decide(c, clock)
   assert.ok(game.cats.list.every((c) => c.state === CAT_STATE.walk))
   for (const c of game.cats.list) c.calmAt = 0
-  for (let i = 0; i < 120; i++) { clock += 33; game.cats.move.call(game.cats, game.cats.list[0], 0.033, clock) }
+  for (let i = 0; i < 200; i++) { clock += 33; game.cats.move.call(game.cats, game.cats.list[0], 0.033, clock) }
   assert.ok(Math.hypot(game.cats.list[0].pos[0] - start[0][0], game.cats.list[0].pos[2] - start[0][2]) > 0.5, 'went for a stroll')
   for (const c of game.cats.list) assert.ok(game.nav.isWalkable(c.pos[0], c.pos[2]) || game.nav.nearestWalkable(c.pos[0], c.pos[2], 1) >= 0, 'on walkable ground')
   game.broadcastSnapshot()
@@ -498,6 +497,9 @@ test('cats bolt from a soldier walking up, a passing bullet and a grenade, but l
   const ch = connect('Uniform', { team: 'axis' })
   const p = deploy(ch, { cls: 'assault', primary: 'mp40', secondary: 'p38' })
   const cat = game.cats.list[0]
+  // the bots are lifted out of the way so only this soldier is near the cat
+  const others = [...game.players.values()].filter((q) => q !== p && q.alive)
+  for (const q of others) q.pos[1] += 40
   const calm = () => Object.assign(cat, { state: CAT_STATE.lie, until: Infinity, path: null, calmAt: 0 })
   cat.pos = p.pos.slice()
   const d = openDirection(cat.pos, 4)
@@ -522,5 +524,6 @@ test('cats bolt from a soldier walking up, a passing bullet and a grenade, but l
   assert.equal(cat.state, CAT_STATE.lie, 'shots far off are ignored')
   game.explode({ owner: p.id, team: p.team, k: 0, pos: [cat.pos[0] + 5, cat.pos[1], cat.pos[2]] })
   assert.equal(cat.state, CAT_STATE.run, 'a grenade going off')
+  for (const q of others) q.pos[1] -= 40
   ch.disconnect()
 })

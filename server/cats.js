@@ -67,22 +67,23 @@ export class Cats {
     if (c.state === CAT_STATE.run && c.path && c.pathIdx < c.path.length) return
     const nav = this.g.nav
     const away = Math.atan2(c.pos[0] - from[0], c.pos[2] - from[2])
-    let best = null; let bestScore = -Infinity
-    for (let k = 0; k < 8; k++) {
-      const a = away + (Math.random() - 0.5) * 1.6
+    const spots = []
+    for (let k = 0; k < 12; k++) {
+      // straight away first; a cat in a corner darts off whichever way is open
+      const a = k < 6 ? away + (Math.random() - 0.5) * 1.6 : away + (k - 6) * TAU / 6
       const d = CAT.fleeDist * (0.6 + Math.random() * 0.5)
       const i = nav.nearestWalkable(c.pos[0] + Math.sin(a) * d, c.pos[2] + Math.cos(a) * d, 3)
       if (i < 0) continue
       const pt = nav.center(i)
-      const score = Math.hypot(pt[0] - from[0], pt[2] - from[2]) + nav.clear[i]
-      if (score > bestScore) { bestScore = score; best = pt }
+      spots.push({ pt, score: Math.hypot(pt[0] - from[0], pt[2] - from[2]) + nav.clear[i] })
     }
-    if (!best || !this.go(c, best)) return
+    spots.sort((a, b) => b.score - a.score)
+    if (!spots.some((s) => this.go(c, s.pt))) return
     c.state = CAT_STATE.run
   }
 
   go (c, dest) {
-    const path = this.g.nav.findPath(c.pos, dest, 6000)
+    const path = this.g.nav.findPath(c.pos, dest, 20000)
     if (!path) return false
     c.path = path
     c.pathIdx = 0
@@ -106,21 +107,30 @@ export class Cats {
     }
   }
 
+  // mostly strolling about; now and then a look around, and once in a while a lie-down on the warm ground
   decide (c, now) {
     const roll = Math.random()
-    const nav = this.g.nav
-    if (roll < 0.55) {
-      const i = nav.randomCell(Math.random, (pt) => Math.hypot(pt[0] - c.pos[0], pt[2] - c.pos[2]) < CAT.wanderRange)
-      if (this.go(c, nav.center(i))) { c.state = CAT_STATE.walk; return }
-    }
-    if (roll > 0.8) {
+    if (roll < 0.75 && this.stroll(c)) { c.state = CAT_STATE.walk; return }
+    if (roll > 0.92) {
       c.state = CAT_STATE.lie
-      c.until = now + 6000 + Math.random() * 12000
+      c.until = now + 5000 + Math.random() * 7000
     } else {
       c.state = CAT_STATE.idle
-      c.until = now + 1500 + Math.random() * 4000
+      c.until = now + 800 + Math.random() * 2500
       c.yaw = wrap(c.yaw + (Math.random() - 0.5) * 2)
     }
+  }
+
+  // somewhere a few metres off, in open ground the cat can get to
+  stroll (c) {
+    const nav = this.g.nav
+    for (let k = 0; k < 6; k++) {
+      const a = Math.random() * TAU
+      const d = 3 + Math.random() * (CAT.wanderRange - 3)
+      const i = nav.nearestWalkable(c.pos[0] + Math.sin(a) * d, c.pos[2] + Math.cos(a) * d, 2)
+      if (i >= 0 && nav.clear[i] >= 2 && this.go(c, nav.center(i))) return true
+    }
+    return false
   }
 
   move (c, dt, now) {
