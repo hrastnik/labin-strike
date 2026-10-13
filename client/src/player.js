@@ -1,6 +1,7 @@
-// Local first-person controller: look, WASD movement, sprint, jump, crouch on the shared Rapier character motor.
+// Local first-person controller: look, WASD movement, sprint, jump, crouch, lean on the shared Rapier character motor.
 import { PLAYER } from '@shared/constants.js'
 import { CharacterMotor } from '@shared/physics.js'
+import { leanShift } from '@shared/hitbox.js'
 
 const FIXED_DT = 1 / 120
 
@@ -14,6 +15,7 @@ export class LocalPlayer {
     this.hp = PLAYER.maxHealth
     this.eye = PLAYER.eye
     this.wantCrouch = false
+    this.lean = 0 // -1 left .. 1 right
     this.acc = 0
     this.prev = { x: 0, y: 0, z: 0 } // feet position before the last physics step (render interpolation)
     this.stepUp = 0 // eye offset easing out autostep / curb climbs
@@ -39,6 +41,7 @@ export class LocalPlayer {
     this.life = life
     this.hp = PLAYER.maxHealth
     this.eye = PLAYER.eye
+    this.lean = 0
     this.acc = 0
     this._snapRender()
   }
@@ -62,13 +65,14 @@ export class LocalPlayer {
   }
 
   /**
-   * ctl: { f, b, l, r, jump, crouch, sprint, ads, speedMul }  (booleans; ads is 0..1, speedMul from the weapon in hand)
+   * ctl: { f, b, l, r, jump, crouch, sprint, ads, speedMul, lean, leanRoom }  (booleans; ads is 0..1, speedMul from the weapon in hand,
+   *   lean -1 / 0 / 1, leanRoom(side) how much of a full lean fits before the head meets a wall, 0..1)
    * returns { steps: number of footsteps to play, landed: impact speed or 0 }
    */
   update (dt, ctl) {
     const out = { steps: 0, landed: 0 }
     this.sprinting = false
-    if (!this.alive) return out
+    if (!this.alive) { this.lean = 0; return out }
     this.motor.setCrouch(ctl.crouch)
     let fx = 0; let fz = 0
     if (ctl.f) fz -= 1
@@ -116,6 +120,8 @@ export class LocalPlayer {
     // smooth eye height for crouch transitions
     const targetEye = this.motor.crouched ? PLAYER.crouchEye : PLAYER.eye
     this.eye += (targetEye - this.eye) * Math.min(1, dt * 14)
+    this.lean += (ctl.lean - this.lean) * Math.min(1, dt * 10)
+    if (this.lean) this.lean = Math.sign(this.lean) * Math.min(Math.abs(this.lean), ctl.leanRoom(Math.sign(this.lean)))
     // void safety
     if (this.motor.pos.y < -10) { this.motor.setPosition(this.motor.pos.x, 5, this.motor.pos.z); this._snapRender() }
     return out
@@ -125,7 +131,8 @@ export class LocalPlayer {
   eyePos (out) {
     const p = this.motor.pos; const q = this.prev
     const a = this.alive ? this.acc / FIXED_DT : 1
-    out.set(q.x + (p.x - q.x) * a, q.y + (p.y - q.y) * a + this.eye + this.stepUp, q.z + (p.z - q.z) * a)
+    const s = leanShift(this.yaw, this.lean)
+    out.set(q.x + (p.x - q.x) * a + s[0], q.y + (p.y - q.y) * a + this.eye + this.stepUp, q.z + (p.z - q.z) * a + s[1])
     return out
   }
 

@@ -7,13 +7,15 @@ import { WEAPONS, CLASSES, GRENADE, KNIFE, sanitizeLoadout } from '@shared/weapo
 import { MODES, SD, SD_SITES, otherTeam, sdSiteAt } from '@shared/modes.js'
 import { parseGlbJson, extractMapData } from '@shared/mapdata.js'
 import { buildMapWorld, rayMap, lineOfSight } from '@shared/physics.js'
-import { rayVsPlayer, knifeReach } from '@shared/hitbox.js'
+import { rayVsPlayer, knifeReach, leanShift } from '@shared/hitbox.js'
 import { TANK, tankSide, gunRay, wrapAngle } from '@shared/tanks.js'
+import { BIKE, bikeSide } from '@shared/bikes.js'
 import { createRenderer, createScene, fitSunToBounds, fetchMap, parseMap } from './renderer.js'
 import { ShadowCache } from './shadowcache.js'
 import { loadCars } from './cars.js'
 import { loadCats } from './cats.js'
 import { loadTanks } from './tanks.js'
+import { Bikes } from './bikes.js'
 import { loadWeaponModels } from './weaponmodels.js'
 import { Input } from './input.js'
 import { LocalPlayer } from './player.js'
@@ -30,6 +32,8 @@ import { Net } from './net.js'
 import { LoadoutMenu } from './loadout.js'
 
 const BASE_FOV = 68
+const LEAN_ROLL = 0.18 // camera roll at a full lean, radians
+const LEAN_GAP = 0.2 // closest the leaning eye gets to a wall
 const $ = (id) => document.getElementById(id)
 const params = new URLSearchParams(location.search)
 
@@ -65,6 +69,7 @@ const G = {
   useHeld: false, // last use-key state sent to the server
   driving: null, // the tank we are in (tanks.js state), confirmed by the server
   tankReadyAt: 0, // performance.now() when its gun is loaded
+  riding: null, // the motorcycle we are on (bikes.js state), confirmed by the server
   tps: 0, // server position corrections received
   trace: null // test helper: per-frame [t, camX, camY, camZ]
 }
@@ -99,6 +104,7 @@ let grenades = null
 let cars = null
 let cats = null
 let tanks = null
+let bikes = null
 
 function resize () {
   const w = window.innerWidth; const h = window.innerHeight
@@ -271,6 +277,7 @@ function leave (msg) {
   cats?.clear()
   stopDriving()
   tanks?.clear()
+  bikes?.clear()
   grenades?.clear()
   drops.clear()
   bomb.remove()
@@ -387,9 +394,10 @@ net.on('team', (d) => {
 net.on('tp', (d) => {
   G.tps++
   if (!player || d.life !== player.life) return
-  if (G.driving) {
-    G.driving.body.setPose(d.pos[0], d.pos[1], d.pos[2], d.yaw ?? G.driving.body.yaw)
-    G.driving.body.stop()
+  const v = G.driving || G.riding
+  if (v) {
+    v.body.setPose(d.pos[0], d.pos[1], d.pos[2], d.yaw ?? v.body.yaw)
+    v.body.stop()
   } else player.teleport(d.pos)
 })
 
@@ -413,10 +421,31 @@ net.on('drive', (d) => {
   hud.scope(false)
 })
 
+// the server puts us on a motorcycle ({ id, pos, yaw }) or back on foot ({ id: 0, pos })
+net.on('ride', (d) => {
+  if (!player || d.life !== player.life || !bikes) return
+  if (!d.id) {
+    stopDriving()
+    if (player.alive) player.teleport(d.pos)
+    return
+  }
+  const s = bikes.get(d.id)
+  if (!s) return
+  s.body.setPose(d.pos[0], d.pos[1], d.pos[2], d.yaw)
+  s.body.stop()
+  bikes.mine = G.riding = s
+  player.yaw = d.yaw
+  player.pitch = -0.15
+  input.mouse.left = false
+  hud.scope(false)
+})
+
 function stopDriving () {
   if (tanks) tanks.mine = null
-  G.driving = null
+  if (bikes) bikes.mine = null
+  G.driving = G.riding = null
   audio.engine(0)
+  audio.bikeEngine(0)
 }
 
 net.on('snap', (s) => {
@@ -424,6 +453,7 @@ net.on('snap', (s) => {
   avatars.onSnapshot(s, G.myId, G.roster, G.team)
   cats?.onSnapshot(s.t, s.c)
   tanks?.onSnapshot(s.t, s.k)
+  bikes?.onSnapshot(s.t, s.b)
   G.aliveIds.clear()
   for (const e of s.p) {
     if (e[6] & 1) G.aliveIds.add(e[0])
@@ -511,6 +541,15 @@ net.on('shell', (d) => {
   const dist = e.distanceTo(ear)
   audio.explosion(e, dist)
   if (player.alive) G.shake = Math.max(G.shake, Math.max(0, 1 - dist / 35) ** 2)
+})
+
+net.on('bikeboom', (d) => {
+  if (G.state !== 'playing') return
+  const pos = new THREE.Vector3(...d.p)
+  for (let i = 0; i < 2; i++) effects.explosion(pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 1.2, 0.4 + i * 0.5, (Math.random() - 0.5) * 1.6)), null)
+  const dist = pos.distanceTo(camera.position)
+  audio.explosion(pos, dist)
+  if (player.alive) G.shake = Math.max(G.shake, Math.max(0, 1 - dist / 30) ** 2)
 })
 
 net.on('tankboom', (d) => {
@@ -619,8 +658,8 @@ net.on('kill', (d) => {
   const victim = G.roster.get(d.v)
   hud.killfeed(killer, victim, d.w, d.hs, G.myId)
   if (d.v === G.myId && player) {
-    // killed in a tank: the death camera starts from the chase camera, not inside the hull
-    player.deathPos = G.driving ? camera.position.clone() : player.eyePos(new THREE.Vector3())
+    // killed in a tank or on a bike: the death camera starts from the chase camera
+    player.deathPos = G.driving || G.riding ? camera.position.clone() : player.eyePos(new THREE.Vector3())
     stopDriving()
     player.alive = false
     player.hp = 0
@@ -631,6 +670,7 @@ net.on('kill', (d) => {
     G.act = null
   } else if (d.k === G.myId && victim) {
     hud.center(`<small>You killed ${escapeHtml(victim.name)}${d.hs ? ' · headshot' : ''}</small>`, 1.6)
+    if (d.hs) audio.headshot()
   }
   const a = avatars.map.get(d.v)
   if (a) a.killedLife = a.life // drop immediately instead of waiting for the interpolation delay
@@ -671,7 +711,7 @@ function rayPlayers (o, d, maxT) {
   let best = null
   for (const a of avatars.map.values()) {
     if (!a.exposed) continue
-    const h = rayVsPlayer(o, d, maxT, a.pos.x, a.pos.y, a.pos.z, a.crouched)
+    const h = rayVsPlayer(o, d, maxT, a.pos.x, a.pos.y, a.pos.z, a.crouched, leanShift(a.yaw, a.lean))
     if (h && (!best || h.t < best.t)) best = { ...h, avatar: a }
   }
   return best
@@ -690,6 +730,8 @@ function fireShot (spread) {
   let maxT = mh ? mh.dist : w.range
   const th = tanks?.ray(o, d, maxT)
   if (th) maxT = th.t
+  const bh = bikes?.ray(o, d, maxT)
+  if (bh) maxT = bh.t
   const ph = rayPlayers(o, d, maxT)
   const t = ph ? ph.t : maxT
   const end = tmpO.clone().addScaledVector(dir, t)
@@ -698,13 +740,14 @@ function fireShot (spread) {
   effects.muzzle(muzzle)
   if (ph) {
     effects.blood(end, dir.clone().negate())
-  } else if (th) {
+  } else if (bh || th) {
     effects.sparks(end, [-dir.x, -dir.y, -dir.z])
   } else if (mh) {
     effects.impact(end, mh.normal)
   }
   const msg = { w: weapons.id, o: o.map(r2), e: [r2(end.x), r2(end.y), r2(end.z)] }
   if (ph && ph.avatar.team !== G.team) msg.hit = { id: ph.avatar.id, zone: ph.zone }
+  else if (!ph && bh) { if (bh.bike.team !== G.team) msg.hit = { bike: bh.bike.id } }
   else if (!ph && th && th.tank.team !== G.team) msg.hit = { tank: th.tank.id }
   net.emit('fire', msg)
 }
@@ -761,8 +804,11 @@ function crosshairTarget () {
   let maxT = mh ? mh.dist : 150
   const th = tanks?.ray(o, d, maxT, G.driving)
   if (th) maxT = th.t
+  const bh = bikes?.ray(o, d, maxT, G.riding)
+  if (bh) maxT = bh.t
   const ph = rayPlayers(o, d, maxT)
   if (ph) return { name: ph.avatar.name, friendly: ph.avatar.team === G.team }
+  if (bh) return { name: bikeSide(bh.bike.team).name, friendly: bh.bike.team === G.team }
   if (th) return { name: tankSide(th.tank.team).name, friendly: th.tank.team === G.team }
   return null
 }
@@ -795,6 +841,7 @@ async function boot () {
     tanks = await loadTanks(scene, RAPIER, world)
     progress(0.99, 'Arming…')
     await weaponModels // before anything builds a weapon, grenade or knife
+    bikes = new Bikes(scene, RAPIER, world) // its riders are soldiers, who carry a weapon
     fitSunToBounds(sun, mapData.bounds)
     // the map and the parked cars never move: their shadows are rendered once
     shadowCache.addStatic(mapRoot, ...(cars ? [cars] : []))
@@ -850,13 +897,14 @@ function frame () {
   if (G.state === 'playing') {
     cats?.update(dt, avatars.renderTime(INTERP_DELAY), camera.position)
     tanks?.update(dt, avatars.renderTime(INTERP_DELAY), (pos) => effects.smoke(pos))
+    bikes?.update(dt, avatars.renderTime(INTERP_DELAY), (pos) => effects.smoke(pos))
   }
   grenades?.update(dt, (pos, impact) => audio.nadeBounce(pos, Math.min(1, impact / 10)))
   camera.updateMatrixWorld()
   cars?.cull(camera)
   renderer.clear()
   renderer.render(scene, camera)
-  if (G.state === 'playing' && player?.alive && !G.driving) viewmodel.render(renderer, 58 - (BASE_FOV - fovCurrent) * 0.35, scene, camera)
+  if (G.state === 'playing' && player?.alive && !G.driving && !G.riding) viewmodel.render(renderer, 58 - (BASE_FOV - fovCurrent) * 0.35, scene, camera)
   if (G.trace) G.trace.push([now, camera.position.x, camera.position.y, camera.position.z])
   input.endFrame()
 }
@@ -889,14 +937,21 @@ function updateGame (dt, now) {
   const canAct = player.alive && locked && G.match.state === 'playing' && !loadoutMenu.isOpen
   // Search and Destroy: hold F to plant or defuse; the server decides whether it counts, and we hold still meanwhile
   const sdLive = G.match.mode === 'sd' && G.match.roundState === 'live'
-  const wantUse = canAct && !G.driving && sdLive && input.down('KeyF')
-  if (wantUse !== G.useHeld) { G.useHeld = wantUse; net.emit('use', { on: wantUse }, true) }
   const acting = !!G.act
-  // E climbs into our side's tank when standing beside it, and out again
-  const board = canAct && !G.driving && !acting && !weapons.busy ? tanks?.boardable(G.team, player.pos) : null
-  if (canAct && input.wasPressed('KeyE') && (G.driving || board)) net.emit('tank', { on: !G.driving }, true)
+  // F also climbs into our side's tank or onto its motorcycle when standing beside it, and out again
+  const mounted = G.driving || G.riding
+  const free = canAct && !mounted && !acting && !weapons.busy
+  const board = free ? tanks?.boardable(G.team, player.pos) : null
+  const mount = free && !board ? bikes?.boardable(G.team, player.pos) : null
+  if (canAct && input.wasPressed('KeyF')) {
+    if (G.driving || board) net.emit('tank', { on: !G.driving }, true)
+    else if (G.riding || mount) net.emit('bike', { on: !G.riding }, true)
+  }
+  const wantUse = canAct && !mounted && !board && !mount && sdLive && input.down('KeyF')
+  if (wantUse !== G.useHeld) { G.useHeld = wantUse; net.emit('use', { on: wantUse }, true) }
 
   if (G.driving) driveTank(dt, now, G.driving, canAct)
+  else if (G.riding) rideBike(dt, now, G.riding)
   else moveOnFoot(dt, now, canAct, acting)
 
   // remote players
@@ -919,7 +974,8 @@ function updateGame (dt, now) {
   } else {
     hud.death(!player.alive && player.deathPos && G.match.state === 'playing', G.killerName, (G.respawnAt - now) / 1000, next)
   }
-  const sites = updateObjectives(now, sdLive, acting, board ? `Press <kbd>E</kbd> to drive the ${tankSide(board.team).name}` : '')
+  const prompt = board ? `Press <kbd>F</kbd> to drive the ${tankSide(board.team).name}` : mount ? `Press <kbd>F</kbd> to ride the ${bikeSide(mount.team).name}` : ''
+  const sites = updateObjectives(now, sdLive, acting, prompt)
   hud.scoreboard(input.down('Tab') || G.match.state === 'ended', G.roster, G.match, G.myId, G.aliveIds)
   hud.netstat(G.myPing, G.fps)
   const others = []
@@ -936,6 +992,9 @@ function updateGame (dt, now) {
     if (!friendly && now - t.firedAt > 2000) continue
     others.push({ x: t.pos[0], z: t.pos[2], friendly, tank: true })
   }
+  for (const b of bikes?.map.values() ?? []) {
+    if (b.team === G.team && !b.destroyed && !b.driver) others.push({ x: b.pos[0], z: b.pos[2], friendly: true, bike: true })
+  }
   hud.compass(player.pos, player.alive ? player.yaw : camera.rotation.y, others, sites)
 }
 
@@ -943,11 +1002,11 @@ function moveOnFoot (dt, now, canAct, acting) {
   hud.tankGun(null)
   hud.gunSight(null)
   audio.engine(0)
+  audio.bikeEngine(0)
   // weapon controls
   let switchTo = null
   if (input.wasPressed('Digit1')) switchTo = 0
   if (input.wasPressed('Digit2')) switchTo = 1
-  if (input.wasPressed('KeyQ')) switchTo = weapons.prevIndex
   if (input.mouse.wheel) switchTo = (weapons.index + 1) % weapons.slots.length
   const armed = canAct && !acting
   const shots = weapons.update(dt, {
@@ -963,8 +1022,8 @@ function moveOnFoot (dt, now, canAct, acting) {
     alive: canAct
   }, { speed: player.speed, grounded: player.grounded, crouched: player.crouched })
 
-  // tanks drive through soldiers: step out from under a friendly one rather than stay stuck in its hull
-  const out = player.alive && tanks?.pushOut(player.pos)
+  // tanks and bikes drive through soldiers: step out of one rather than stay stuck in it
+  const out = player.alive && (tanks?.pushOut(player.pos) || bikes?.pushOut(player.pos))
   if (out) player.teleport(out)
 
   // movement (frozen while the loadout screen is up, or while planting / defusing)
@@ -974,6 +1033,7 @@ function moveOnFoot (dt, now, canAct, acting) {
   // aiming or pulling the trigger drops out of the sprint
   const sprint = forward && !crouch && (input.down('ShiftLeft') || input.down('ShiftRight')) &&
     !(canAct && (input.mouse.left || input.mouse.right)) && !weapons.busy
+  const lean = canAct && !acting && !sprint ? (input.down('KeyE') ? 1 : 0) - (input.down('KeyQ') ? 1 : 0) : 0
   const move = player.update(dt, {
     f: forward,
     b: steer && (input.down('KeyS') || input.down('ArrowDown')),
@@ -983,7 +1043,9 @@ function moveOnFoot (dt, now, canAct, acting) {
     crouch,
     sprint,
     ads: weapons.adsT,
-    speedMul: weapons.def.moveMul
+    speedMul: weapons.def.moveMul,
+    lean,
+    leanRoom
   })
   if (move.steps) audio.footstep(null, player.crouched ? 0.05 : 0.11)
   if (move.landed) { viewmodel.land(Math.min(1, move.landed / 9)); audio.footstep(null, 0.2) }
@@ -992,7 +1054,7 @@ function moveOnFoot (dt, now, canAct, acting) {
   const ws = weapons
   if (player.alive) {
     player.eyePos(camera.position)
-    camera.rotation.set(player.pitch + ws.punch.pitch, player.yaw + ws.punch.yaw, 0)
+    camera.rotation.set(player.pitch + ws.punch.pitch, player.yaw + ws.punch.yaw, -player.lean * LEAN_ROLL)
     if (G.shake > 0.001) {
       camera.rotation.x += (Math.random() - 0.5) * 0.06 * G.shake
       camera.rotation.y += (Math.random() - 0.5) * 0.06 * G.shake
@@ -1050,7 +1112,7 @@ function moveOnFoot (dt, now, canAct, acting) {
     G.lastSend = Math.max(G.lastSend + 1000 / INPUT_RATE, now - 50)
     const p = player.pos
     const flags = (player.crouched ? 2 : 0) | (ws.adsT > 0.5 ? 4 : 0) | (ws.reloading ? 8 : 0)
-    net.emit('st', [player.life, r2(p.x), r2(p.y), r2(p.z), Math.round(player.yaw * 1000) / 1000, Math.round(player.pitch * 1000) / 1000, flags, ws.index, Math.round(now)])
+    net.emit('st', [player.life, r2(p.x), r2(p.y), r2(p.z), Math.round(player.yaw * 1000) / 1000, Math.round(player.pitch * 1000) / 1000, flags, ws.index, Math.round(now), r2(player.lean)])
   }
 
   // viewmodel (hidden behind the scope overlay when a scoped rifle is fully raised)
@@ -1081,6 +1143,14 @@ function moveOnFoot (dt, now, canAct, acting) {
   hud.weapon(ws)
   const spread = ws.spread({ speed: player.speed, grounded: player.grounded, crouched: player.crouched })
   hud.crosshair(spread, fovCurrent, player.alive && ws.adsT < 0.5 && !ws.reloading && ws.sprintT < 0.5 && !ws.busy, player.alive ? crosshairTarget() : null)
+}
+
+function leanRoom (side) {
+  const p = player.pos
+  const s = leanShift(player.yaw, side)
+  const d = [s[0] / PLAYER.leanDist, 0, s[1] / PLAYER.leanDist]
+  const hit = rayMap(RAPIER, world, [p.x, p.y + player.eye, p.z], d, PLAYER.leanDist + LEAN_GAP)
+  return hit ? Math.max(0, (hit.dist - LEAN_GAP) / PLAYER.leanDist) : 1
 }
 
 const CAM_BACK = 8 // metres behind the turret
@@ -1170,6 +1240,54 @@ function driveTank (dt, now, s, canAct) {
   hud.health(s.hp, true, TANK.maxHealth, 'ARMOUR')
   hud.tankGun(sd.gunName, ready ? 1 : 1 - (G.tankReadyAt - now) / (TANK.reload * 1000))
   hud.crosshair(0.003, BASE_FOV, true, crosshairTarget())
+}
+
+const BIKE_CAM_BACK = 4.5
+
+// W throttle, S brake and reverse, A/D steer; the mouse looks around, and the view turns with the bike
+function rideBike (dt, now, s) {
+  const steer = !loadoutMenu.isOpen
+  const key = (a, b) => steer && (input.down(a) || input.down(b))
+  const throttle = (key('KeyW', 'ArrowUp') ? 1 : 0) - (key('KeyS', 'ArrowDown') ? 1 : 0)
+  const turn = (key('KeyA', 'ArrowLeft') ? 1 : 0) - (key('KeyD', 'ArrowRight') ? 1 : 0)
+  const yaw0 = s.body.yaw
+  if (!s.destroyed) s.body.drive(dt, throttle, turn)
+  const b = s.body.pos
+  s.pos = [b.x, b.y, b.z]
+  s.yaw = s.body.yaw
+  s.lean = s.body.lean
+  player.yaw = wrapAngle(player.yaw + wrapAngle(s.yaw - yaw0))
+  player.teleport([b.x, b.y, b.z])
+
+  player.pitch = Math.max(-0.6, Math.min(0.5, player.pitch))
+  const yaw = player.yaw; const pitch = player.pitch
+  camFwd.set(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch))
+  camPivot.set(b.x, b.y + 1.7, b.z)
+  camBack.copy(camFwd).negate()
+  camBack.y += 0.3
+  camBack.normalize()
+  const wall = rayMap(RAPIER, world, camPivot.toArray(), camBack.toArray(), BIKE_CAM_BACK)
+  camera.position.copy(camPivot).addScaledVector(camBack, wall ? Math.max(0.6, wall.dist - 0.3) : BIKE_CAM_BACK)
+  camera.rotation.set(pitch, yaw, 0)
+  if (G.shake > 0.001) {
+    camera.rotation.x += (Math.random() - 0.5) * 0.06 * G.shake
+    camera.rotation.y += (Math.random() - 0.5) * 0.06 * G.shake
+  }
+  G.shake *= Math.exp(-dt * 4)
+  if (fovCurrent !== BASE_FOV) { fovCurrent = BASE_FOV; camera.fov = BASE_FOV; camera.updateProjectionMatrix() }
+  camera.updateMatrixWorld()
+
+  audio.bikeEngine(s.destroyed ? 0 : 0.12 + Math.min(1, Math.abs(s.body.speed) / BIKE.speed) * 0.88)
+  if (now - G.lastSend >= 1000 / INPUT_RATE - 4) {
+    G.lastSend = Math.max(G.lastSend + 1000 / INPUT_RATE, now - 50)
+    net.emit('bk', [player.life, r2(b.x), r2(b.y), r2(b.z), r3(s.yaw), r2(s.lean), Math.round(now)])
+  }
+
+  hud.scope(false)
+  hud.gunSight(null)
+  hud.health(player.hp, player.alive)
+  hud.bike(bikeSide(s.team).name, s.hp / BIKE.maxHealth)
+  hud.crosshair(0, BASE_FOV, false, null)
 }
 
 const markV = new THREE.Vector3()
@@ -1264,6 +1382,8 @@ window.__labin = {
     cats: cats ? [...cats.map].map(([id, c]) => ({ id, state: c.state, pos: c.pos.toArray().map(r2) })) : [],
     tanks: tanks ? [...tanks.map.values()].map((t) => ({ id: t.id, team: t.team, hp: t.hp, driver: t.driver, destroyed: t.destroyed, pos: t.pos.map(r2) })) : [],
     driving: G.driving?.id ?? 0,
+    bikes: bikes ? [...bikes.map.values()].map((b) => ({ id: b.id, team: b.team, hp: b.hp, driver: b.driver, destroyed: b.destroyed, pos: b.pos.map(r2), yaw: r3(b.yaw), lean: r2(b.lean) })) : [],
+    riding: G.riding?.id ?? 0,
     sprinting: player?.sprinting,
     speed: player?.speed,
     loadout: G.loadout,

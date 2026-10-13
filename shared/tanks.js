@@ -81,7 +81,8 @@ function toBox (b, v) {
   return [v[0] * c - v[2] * s, v[1], v[0] * s + v[2] * c]
 }
 
-function rayBox (o, d, maxT, b) {
+// distance along the ray (d normalized) to the oriented box { c, yaw, h } within maxT, or null
+export function rayBox (o, d, maxT, b) {
   const lo = toBox(b, [o[0] - b.c[0], o[1] - b.c[1], o[2] - b.c[2]])
   const ld = toBox(b, d)
   let t0 = 0; let t1 = maxT
@@ -110,17 +111,15 @@ export function rayVsTank (o, d, maxT, t) {
   return best
 }
 
+// distance from p to the nearest point of the oriented box (0 inside it)
+export function boxDistance (p, b) {
+  const l = toBox(b, [p[0] - b.c[0], p[1] - b.c[1], p[2] - b.c[2]])
+  return Math.hypot(Math.max(0, Math.abs(l[0]) - b.h[0]), Math.max(0, Math.abs(l[1]) - b.h[1]), Math.max(0, Math.abs(l[2]) - b.h[2]))
+}
+
 // distance from p to the nearest point of the tank (0 inside it)
 export function tankDistance (p, t) {
-  let best = Infinity
-  for (const b of tankBoxes(t)) {
-    const l = toBox(b, [p[0] - b.c[0], p[1] - b.c[1], p[2] - b.c[2]])
-    const dx = Math.max(0, Math.abs(l[0]) - b.h[0])
-    const dy = Math.max(0, Math.abs(l[1]) - b.h[1])
-    const dz = Math.max(0, Math.abs(l[2]) - b.h[2])
-    best = Math.min(best, Math.hypot(dx, dy, dz))
-  }
-  return best
+  return Math.min(...tankBoxes(t).map((b) => boxDistance(p, b)))
 }
 
 // true if (x, z) at height y is under the hull, give or take pad metres

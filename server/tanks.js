@@ -5,7 +5,7 @@ import { PLAYER, TEAMS } from '../shared/constants.js'
 import { damageFor } from '../shared/weapons.js'
 import { TANK, TankBody, tankSide, rayVsTank, tankDistance, underHull, gunRay, tankPoint, shellDamage, armourFor, wrapAngle } from '../shared/tanks.js'
 import { rayMap, CHAR_GROUPS, TANK_QUERY } from '../shared/physics.js'
-import { rayVsPlayer } from '../shared/hitbox.js'
+import { rayVsPlayer, leanShift } from '../shared/hitbox.js'
 import { CAT } from './cats.js'
 
 const TEAM_IDS = ['allies', 'axis']
@@ -138,6 +138,7 @@ export class Tanks {
     p.cookAt = 0
     p.useOn = false
     p.crouch = p.ads = p.reloading = false
+    p.lean = 0
     p.pos = t.pos.slice()
     p.posAt = now
     p.lastStateAt = t.lastStateAt = now
@@ -222,6 +223,7 @@ export class Tanks {
       if (!q.alive || q.tank || q.team === t.team) continue
       if (underHull(t, q.pos[0], q.pos[1], q.pos[2], 0.15)) this.g.applyDamage(q, driver, 1000, TANK.crushId, 'body', t.pos)
     }
+    this.g.bikes.crush(t, driver)
   }
 
   // { t: turret yaw, g: gun pitch } as the driver saw them when firing
@@ -245,9 +247,11 @@ export class Tanks {
       const h = rayVsTank(o, d, maxT, u)
       if (h != null) { maxT = h; direct = u }
     }
+    const bike = g.bikes.ray(o, d, maxT)
+    if (bike) { maxT = bike.t; direct = null }
     for (const q of g.players.values()) {
       if (!q.alive || q.tank) continue
-      const h = rayVsPlayer(o, d, maxT, q.pos[0], q.pos[1], q.pos[2], q.crouch)
+      const h = rayVsPlayer(o, d, maxT, q.pos[0], q.pos[1], q.pos[2], q.crouch, leanShift(q.yaw, q.lean))
       if (h) { maxT = h.t; direct = null }
     }
     const e = [o[0] + d[0] * maxT, o[1] + d[1] * maxT, o[2] + d[2] * maxT]

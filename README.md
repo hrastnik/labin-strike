@@ -23,12 +23,13 @@ Features:
 
 - 22 WWII weapons across six classes (Rifleman, Assault, Support, Marksman, Officer, Engineer), each with its own damage falloff, fire rate, recoil, spread, reload style, handling and movement weight
 - Strict faction rules: Axis soldiers only ever carry Axis weapons and Allied soldiers Allied ones, enforced by the server
-- Aim down sights, sprint, crouch, jump, and spawn protection
+- Aim down sights, sprint, crouch, lean (<kbd>Q</kbd>/<kbd>E</kbd>, to peek round a corner without stepping out), jump, and spawn protection
 - Every soldier, on either side, carries one Stielhandgranate 24 stick grenade per life. It bounces off the map and has a 3.5 s fuse that starts when the cord is pulled: hold G to cook it, but hold it too long and it goes off in your hand, and if you are killed with it cooking it drops at your feet. Bots throw theirs at enemies who duck behind cover
 - A knife on <kbd>V</kbd> (M3 trench knife or S84/98 bayonet): one stab kills at arm's length. Bots use it up close, and they move in for it while reloading
 - Every death, friendly or enemy, leaves an ammo can under the body for 30 s. Walk over it to refill your own weapons' reserve, up to what you spawned with
 - Health regenerates COD2-style after 5 s without taking damage
-- Tanks, switched on from the pause screen: one per side per match, an M4 Sherman for the Allies and a Panzer IV for the Axis, parked near each side's spawn. Walk up to your own side's tank and press <kbd>E</kbd> to drive it from a chase camera: <kbd>W</kbd><kbd>S</kbd> throttle, <kbd>A</kbd><kbd>D</kbd> turn the hull, the turret follows the mouse, and <kbd>LMB</kbd> fires a high-explosive shell (4 s reload). A tank has 600 armour: rifles and machine guns barely scratch it, grenades, shells and the S&D bomb are what kill it. It runs over enemies, and the crew goes down with it. A destroyed tank stays a smoking wreck until the next match. Bots shoot at enemy tanks and lob their grenades at them
+- Tanks, switched on from the pause screen: one per side per match, an M4 Sherman for the Allies and a Panzer IV for the Axis, parked near each side's spawn. Walk up to your own side's tank and press <kbd>F</kbd> to drive it from a chase camera: <kbd>W</kbd><kbd>S</kbd> throttle, <kbd>A</kbd><kbd>D</kbd> turn the hull, the turret follows the mouse, and <kbd>LMB</kbd> fires a high-explosive shell (4 s reload). A tank has 600 armour: rifles and machine guns barely scratch it, grenades, shells and the S&D bomb are what kill it. It runs over enemies, and the crew goes down with it. A destroyed tank stays a smoking wreck until the next match. Bots shoot at enemy tanks and lob their grenades at them
+- A motorcycle at each base, all match long: a Harley-Davidson WLA for the Allies and a BMW R35 for the Axis. Walk up to your own side's bike and press <kbd>F</kbd> to ride it from a chase camera: <kbd>W</kbd> throttle (up to 15 m/s), <kbd>S</kbd> brake and reverse, <kbd>A</kbd><kbd>D</kbd> steer, and the mouse looks around. It only turns while it rolls, and leans into the corners. The rider sits in the open with no weapon in hand, so they can be shot off it. A bike has 180 condition: bullets wear it down, a grenade at the wheels, a tank shell or a tank rolling over it wrecks it, and the rider goes down with it. A new one stands at the base a minute after it is destroyed
 - Three cats roam the map in place of Counter-Strike's chickens: the main developer's blue-cream tabby plus a ginger and a tuxedo. They meow, flop over on the pavement, and hiss and bolt when you get too close, shoot near them or throw a grenade. Crouch to sneak up on one
 - Server-side bots fill the match up to 8 players. They use A* pathfinding, line-of-sight targeting and human-like aim error
 - Killfeed, compass/minimap, hitmarkers, damage direction indicators
@@ -58,10 +59,10 @@ Handy URL params: `?name=Mateo` pre-fills the callsign, `?team=axis` picks a sid
 | <kbd>LMB</kbd> | Fire | <kbd>RMB</kbd> | Aim down sights |
 | <kbd>Shift</kbd> | Sprint (forward) | <kbd>G</kbd> | Throw grenade (hold to cook) |
 | <kbd>Space</kbd> | Jump | <kbd>C</kbd> / <kbd>Ctrl</kbd> | Crouch |
-| <kbd>R</kbd> | Reload | <kbd>1</kbd> / <kbd>2</kbd> / <kbd>Q</kbd> | Rifle / pistol / last weapon |
+| <kbd>R</kbd> | Reload | <kbd>1</kbd> / <kbd>2</kbd> | Rifle / pistol |
 | <kbd>Tab</kbd> | Scoreboard | <kbd>Esc</kbd> | Pause |
 | <kbd>V</kbd> | Knife | <kbd>B</kbd> | Loadout / switch side |
-| <kbd>F</kbd> (hold) | Plant / defuse (Search and Destroy) | <kbd>E</kbd> | Get in / out of your side's tank |
+| <kbd>Q</kbd> / <kbd>E</kbd> | Lean left / right | <kbd>F</kbd> | Get in / out of your side's tank or onto / off its motorcycle; hold to plant / defuse (Search and Destroy) |
 
 ## How it works
 
@@ -80,6 +81,7 @@ tools/    Blender build scripts for the map and cars, texture/sky generators
 - **Hits.** Players have a head sphere plus body and leg capsules, defined in `shared/hitbox.js`. The client claims a hit, and the server checks the shooter's position, the target's position and line of sight before applying damage.
 - **Search and Destroy.** `server/sd.js` runs the rounds: one spawn each (joiners still get in during the first 15 s), the round and bomb timers, elimination and halftime. Planting and defusing are timed on the server while the client holds the use key and stays put, so a client cannot shorten them. The four bomb sites in `shared/modes.js` were placed with the nav grid so the defenders reach a site in about half the attackers' time.
 - **Tanks.** The driver's client moves the tank with the same Rapier character controller the soldiers use, fitted with a box (`TankBody` in `shared/tanks.js`), and reports its pose like a player does. The server checks the speed and keeps the tank's collider in its own world, so soldiers and bots walk into it. The server fires the shells from its own copy of the turret, settles the armour (hull and turret boxes, tested analytically like the hitboxes), crushes enemies under a moving hull, and parks each side's tank on open ground near its spawns (`server/tanks.js`).
+- **Motorcycles.** `BikeBody` in `shared/bikes.js` is the same idea with a narrow box that turns in proportion to its speed. The rider keeps their own hitbox, posed where the bike is and leaned by the bike's lean, so shots and blasts reach them as they would anyone on foot, while the bike is one box with its own condition. `server/bikes.js` parks each side's bike near its spawns, clear of the tank's spot, and puts a new one there a minute after the old one is destroyed. `client/src/bikes.js` builds both bikes from primitives and seats a soldier of the right side on them while they are ridden.
 - **Map.** Colliders, spawns and car markers are stored as named nodes inside `parking_lot.glb`. Server and client both read them with `shared/mapdata.js`. The server bakes a 0.5 m walkability grid from the map at startup to give bots their pathfinding.
 - **Cars.** Parked cars are instanced from `cars.glb`. Each model costs three draw calls per LOD (paint, opaque, glass), however many copies are on the map.
 
@@ -106,7 +108,7 @@ Sidearms: Walther P38 and Luger P08 (Axis), M1911 and Webley Mk VI (Allies).
 ## Tests
 
 ```bash
-npm test             # weapon catalogue, faction rules, grenades, the server's loadout / fire / team / movement validation, Search and Destroy rounds, and tanks
+npm test             # weapon catalogue, faction rules, grenades, the server's loadout / fire / team / movement validation, Search and Destroy rounds, tanks and motorcycles
 ```
 
 ## Production
@@ -152,6 +154,8 @@ The car models are built with `tools/blender/cars/` and exported to `client/publ
 ```
 
 The tanks are Quaternius's low-poly tanks from [Poly Pizza](https://poly.pizza/u/Quaternius), released under CC0 and used unchanged as `client/public/assets/tanks/sherman.glb` and `panzer.glb`. `shared/tanks.js` holds their measured hull and turret sizes at the 0.36 scale the client draws them at.
+
+The headshot sound, `client/public/assets/sounds/headshot.wav`, layers BMacZero's `bing1.wav` from [Metal Impact Sounds](https://opengameart.org/content/metal-impact-sounds) over qubodup's `qubodupImpactMeat02` from [Impact](https://opengameart.org/content/impact), both CC0 on OpenGameArt.
 
 `node tools/test/run_straight.mjs` is a movement check. It runs the character motor across the map in straight lines and reports places where you would snag on open ground.
 

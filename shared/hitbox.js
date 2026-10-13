@@ -2,12 +2,27 @@
 // Shared so client-side hit claims and server-side bot shots use identical geometry.
 import { PLAYER } from './constants.js'
 
-export function hitZones (x, y, z, crouch) {
+// sideways head shift [x, z] of a player at yaw leaning by lean (-1 left .. 1 right)
+export function leanShift (yaw, lean) {
+  const s = (lean || 0) * PLAYER.leanDist
+  return [Math.cos(yaw) * s, -Math.sin(yaw) * s]
+}
+
+// share of the head's lean shift at height y above the feet: the torso tilts about the hips, the legs stay put
+export function leanFactor (y, crouch) {
+  const h = crouch ? PLAYER.crouchHeight : PLAYER.height
+  const hip = 0.82 * h / PLAYER.height
+  return Math.max(0, (y - hip) / (h - 0.17 - hip))
+}
+
+export function hitZones (x, y, z, crouch, shift = null) {
   const h = crouch ? PLAYER.crouchHeight : PLAYER.height
   const k = h / PLAYER.height
+  const sx = shift ? shift[0] : 0; const sz = shift ? shift[1] : 0
+  const f = leanFactor(h - 0.5, crouch)
   return [
-    { zone: 'head', sphere: true, c: [x, y + h - 0.17, z], r: 0.2 },
-    { zone: 'body', a: [x, y + 0.82 * k, z], b: [x, y + h - 0.5, z], r: 0.3 },
+    { zone: 'head', sphere: true, c: [x + sx, y + h - 0.17, z + sz], r: 0.2 },
+    { zone: 'body', a: [x, y + 0.82 * k, z], b: [x + sx * f, y + h - 0.5, z + sz * f], r: 0.3 },
     { zone: 'legs', a: [x, y + 0.2, z], b: [x, y + 0.82 * k, z], r: 0.2 }
   ]
 }
@@ -60,15 +75,15 @@ export function knifeReach (o, d, x, y, z, crouch) {
   return { dist: Math.max(0, len - PLAYER.radius), angle, at }
 }
 
-// returns { t, zone } of the closest hit within maxT, or null
-export function rayVsPlayer (o, d, maxT, x, y, z, crouch) {
+// returns { t, zone } of the closest hit within maxT, or null; shift: the player's leanShift
+export function rayVsPlayer (o, d, maxT, x, y, z, crouch, shift = null) {
   // cheap reject against a bounding sphere around the player
   const center = [x, y + 0.9, z]
   const oc = sub(o, center)
   const b = dot(oc, d)
   if (b * b - (dot(oc, oc) - 1.5625) < 0) return null
   let best = null
-  for (const hz of hitZones(x, y, z, crouch)) {
+  for (const hz of hitZones(x, y, z, crouch, shift)) {
     const t = hz.sphere ? raySphere(o, d, hz.c, hz.r) : rayCapsule(o, d, hz.a, hz.b, hz.r)
     if (t > 0 && t < maxT && (!best || t < best.t)) best = { t, zone: hz.zone }
   }

@@ -20,7 +20,6 @@ export class WeaponSystem {
     this.ammo = {}
     this.slots.forEach((id, i) => { this.ammo[id] = startingAmmo(this.loadout.cls, id, SLOT_NAMES[i]) })
     this.index = 0
-    this.prevIndex = 1
     this.drawT = this.def.drawTime
     this.reloadT = 0
     this.reloadDur = 0
@@ -62,7 +61,6 @@ export class WeaponSystem {
 
   switchTo (i) {
     if (i === this.index || i < 0 || i >= this.slots.length) return
-    this.prevIndex = this.index
     this.index = i
     this.reloadT = 0
     this.drawT = this.def.drawTime

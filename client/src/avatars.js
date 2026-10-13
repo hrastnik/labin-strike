@@ -18,6 +18,7 @@ const SKIN = '#c49473'
 const FRIEND_TAG = '#8fd8ff'
 const GUNMETAL = '#2b2c2e'
 const STAB_TIME = KNIFE.windup + KNIFE.recover
+const LEAN_TILT = Math.asin(PLAYER.leanDist / 0.76) // 0.76 m from the torso pivot to the head: lands the head where its hitbox shifts
 // crouch leg angles: [planted left, kneeling right]
 const KNEEL = [{ thigh: 1.6, knee: -1.85, ankle: 0.25 }, { thigh: 0.6, knee: -2.46, ankle: 0 }]
 
@@ -106,6 +107,7 @@ export class Avatar {
     this.pos = new THREE.Vector3()
     this.yaw = 0
     this.pitch = 0
+    this.lean = 0
     this.crouch = 0
     this.crouched = false
     this.alive = false
@@ -245,12 +247,12 @@ export class Avatar {
   }
 
   push (t, e) {
-    // e = [id,x,y,z,yaw,pitch,flags,weapon,hp,life,age]; the position belongs to server time t - age
+    // e = [id,x,y,z,yaw,pitch,flags,weapon,hp,life,age,lean]; the position belongs to server time t - age
     const b = this.buffer
     t -= e[10] || 0
     const last = b[b.length - 1]
     if (last && t < last.t) return
-    const s = { t, x: e[1], y: e[2], z: e[3], yaw: e[4], pitch: e[5], flags: e[6], weapon: e[7], hp: e[8], life: e[9] }
+    const s = { t, x: e[1], y: e[2], z: e[3], yaw: e[4], pitch: e[5], flags: e[6], weapon: e[7], hp: e[8], life: e[9], lean: e[11] || 0 }
     if (last && t === last.t) { b[b.length - 1] = s; return } // same position sample, newer state (hp, death...)
     b.push(s)
     if (b.length > 40) b.splice(0, b.length - 40)
@@ -276,6 +278,7 @@ export class Avatar {
     dy = Math.atan2(Math.sin(dy), Math.cos(dy))
     this.yaw = a.yaw + dy * k
     this.pitch = a.pitch + (c.pitch - a.pitch) * k
+    this.lean = a.lean + (c.lean - a.lean) * k
     const src = k < 0.5 ? a : c
     this.flags = src.flags
     this.weapon = src.weapon
@@ -290,6 +293,20 @@ export class Avatar {
     this.alive = alive
     this.crouched = !!(src.flags & 2)
     return true
+  }
+
+  // astride a motorcycle: knees up on the footrests, leaning into the bars, no weapon in hand
+  sit () {
+    this.hips.position.set(0, 0.86, 0.08)
+    this.torso.position.copy(this.hips.position)
+    for (const [i, L] of this.legs.entries()) {
+      L.thigh.rotation.set(1.3, 0, (i ? -1 : 1) * 0.16)
+      L.knee.rotation.x = -1.5
+      L.ankle.rotation.x = 0.25
+    }
+    this.torso.rotation.set(-0.4, 0, 0)
+    this.aim.rotation.x = 0.05
+    this.rifle.visible = this.pistol.visible = false
   }
 
   showFlash () { this.flashT = 0.06 }
@@ -327,6 +344,7 @@ export class Avatar {
     this.aim.rotation.x = this.pitch - this.torso.rotation.x
     this.head.rotation.x = this.pitch * 0.4
     this.torso.rotation.y = Math.sin(this.walkPhase) * 0.06 * sp
+    this.torso.rotation.z = -LEAN_TILT * this.lean
     // knife: twist the shoulders into the stab and swing the arms down through it
     if (this.stabT > 0) {
       this.stabT = Math.max(0, this.stabT - dt)
@@ -355,12 +373,13 @@ export class Avatar {
     } else {
       this.body.rotation.set(0, 0, 0)
       this.body.position.y = 0
-      root.visible = !this.inTank
+      root.visible = !this.inTank && !this.onBike // a bike draws its own rider
       if (this.tag) this.tag.visible = true
     }
   }
 
   get inTank () { return !!(this.flags & 64) }
+  get onBike () { return !!(this.flags & 128) }
 
   // alive and out in the open: what a bullet or a blade can reach
   get exposed () { return this.alive && !this.inTank }

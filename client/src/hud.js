@@ -164,15 +164,28 @@ export class Hud {
 
   // the tank's gun in place of the weapon panel; gun: its name, or null on foot. ready: 0..1 through the reload
   tankGun (gun, ready = 1) {
-    this.set('driving', !!gun, (v) => {
-      this.el.hud.classList.toggle('driving', v)
-      if (!v) { this.last.wname = this.last.hint = this.last.mag = this.last.res = undefined }
-    })
+    this.vehicle(!!gun)
     if (!gun) return
     this.set('wname', gun, (v) => { this.el.weaponName.textContent = v })
     const left = ready < 1 ? `Loading ${Math.round(ready * 100)}%` : 'Ready'
     this.set('mag', left, (v) => { this.el.ammoMag.textContent = v; this.el.ammoMag.classList.toggle('low', ready < 1) })
-    this.set('hint', 'E to get out', (v) => { this.el.weaponHint.textContent = v })
+    this.set('hint', 'F to get out', (v) => { this.el.weaponHint.textContent = v })
+  }
+
+  // the motorcycle's name and condition (0..1) in place of the weapon panel
+  bike (name, condition) {
+    this.vehicle(true)
+    this.set('wname', name, (v) => { this.el.weaponName.textContent = v })
+    const pct = Math.max(0, Math.round(condition * 100))
+    this.set('mag', `${pct}%`, (v) => { this.el.ammoMag.textContent = v; this.el.ammoMag.classList.toggle('low', pct <= 35) })
+    this.set('hint', 'F to get off', (v) => { this.el.weaponHint.textContent = v })
+  }
+
+  vehicle (on) {
+    this.set('driving', on, (v) => {
+      this.el.hud.classList.toggle('driving', v)
+      if (!v) { this.last.wname = this.last.hint = this.last.mag = this.last.res = undefined }
+    })
   }
 
   // where the gun actually points, in screen px (null when off screen); ready: loaded
@@ -393,6 +406,7 @@ export class Hud {
       g.fillStyle = p.friendly ? '#9fd36a' : '#ff4b3a'
       g.beginPath()
       if (p.tank) g.rect(S / 2 + sx - 7, S / 2 + sy - 7, 14, 14)
+      else if (p.bike) g.rect(S / 2 + sx - 4, S / 2 + sy - 4, 8, 8)
       else g.arc(S / 2 + sx, S / 2 + sy, p.friendly ? 4 : 5, 0, Math.PI * 2)
       g.fill()
       g.strokeStyle = 'rgba(0,0,0,.7)'
