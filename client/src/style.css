@@ -281,6 +281,22 @@ kbd { font-family: 'Oswald', sans-serif; font-size: 11px; color: var(--ink); bor
 #death .next { font-size: 14px; margin-top: 10px; color: var(--accent); letter-spacing: 0.08em; }
 #pause .pause-actions { display: flex; gap: 10px; margin-top: 18px; }
 #pause .pause-actions button { margin-top: 0; }
+#pause.spectator .play-only, #pause:not(.spectator) .spec-only { display: none; }
+#btn-watch { margin-top: 8px; }
+
+/* ------------------------------------------------------------- spectating */
+#spec { position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); text-align: center; max-width: calc(100vw - 32px); }
+#spec .who { font-family: 'Stardos Stencil', sans-serif; font-size: 26px; letter-spacing: 0.05em; }
+#spec .who small { font-family: 'Oswald', sans-serif; font-size: 14px; letter-spacing: 0.1em; color: var(--ink-dim); margin-left: 10px; }
+#spec .who .allies { color: var(--allies); }
+#spec .who .axis { color: var(--axis); }
+#spec .sub { font-size: 14px; margin-top: 2px; color: var(--accent); letter-spacing: 0.08em; }
+#spec .keys { font-size: 13px; margin-top: 6px; color: var(--ink-dim); }
+/* watching someone else: our own health, weapon and crosshair have nothing to say */
+#hud.spectating #health, #hud.spectating #bottom-right, #hud.spectating #crosshair, #hud.spectating #vignette,
+#hud.spectating #damage-dirs, #hud.spectating #use-prompt, #hud.spectating #act { display: none; }
+#scoreboard .sb-spec { margin-top: 12px; font-size: 14px; color: var(--ink-dim); letter-spacing: 0.06em; }
+#scoreboard .sb-spec b { font-weight: 400; color: var(--ink); }
 
 .seg { display: flex; gap: 0; }
 .seg button {

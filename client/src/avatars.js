@@ -1,6 +1,6 @@
 // Remote players: procedural low-poly soldiers, snapshot interpolation and simple procedural animation.
 import * as THREE from 'three'
-import { PLAYER } from '@shared/constants.js'
+import { PLAYER, TEAMS } from '@shared/constants.js'
 import { WEAPONS, WEAPON_LIST, KNIFE } from '@shared/weapons.js'
 import { buildGun } from './gunmodels.js'
 
@@ -98,11 +98,13 @@ function flashSprite () {
 let flashMat = null
 
 export class Avatar {
-  constructor (id, team, name, friendly) {
+  // tagColor: the name tag over a friendly's head (spectators see everyone's, in team colours)
+  constructor (id, team, name, friendly, tagColor = FRIEND_TAG) {
     this.id = id
     this.team = team
     this.name = name
     this.friendly = friendly
+    this.tagColor = tagColor
     this.buffer = []
     this.pos = new THREE.Vector3()
     this.yaw = 0
@@ -212,7 +214,7 @@ export class Avatar {
     this.setWeapon('stg44')
 
     if (this.friendly) {
-      this.tag = nameSprite(this.name, FRIEND_TAG)
+      this.tag = nameSprite(this.name, this.tagColor)
       this.tag.position.set(0, 2.25, 0)
       root.add(this.tag)
     }
@@ -241,7 +243,7 @@ export class Avatar {
     this.root.remove(this.tag)
     this.tag.material.map.dispose()
     this.tag.material.dispose()
-    this.tag = nameSprite(name, FRIEND_TAG)
+    this.tag = nameSprite(name, this.tagColor)
     this.tag.position.set(0, 2.25, 0)
     this.root.add(this.tag)
   }
@@ -402,11 +404,12 @@ export class Avatars {
     this.lastSnapLocal = 0
   }
 
+  // myTeam: null for a spectator, who is on neither side
   ensure (id, info, myTeam) {
     let a = this.map.get(id)
     if (a && a.team !== info.team) { a.dispose(); this.map.delete(id); a = null }
     if (!a) {
-      a = new Avatar(id, info.team, info.name, info.team === myTeam)
+      a = myTeam ? new Avatar(id, info.team, info.name, info.team === myTeam) : new Avatar(id, info.team, info.name, true, TEAMS[info.team]?.hud)
       this.map.set(id, a)
       this.scene.add(a.root)
     } else a.setName(info.name)

@@ -3,7 +3,7 @@ import './style.css'
 import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { PLAYER, INPUT_RATE, INTERP_DELAY, MATCH, TEAMS } from '@shared/constants.js'
-import { WEAPONS, CLASSES, GRENADE, KNIFE, sanitizeLoadout } from '@shared/weapons.js'
+import { WEAPONS, WEAPON_LIST, CLASSES, GRENADE, KNIFE, sanitizeLoadout } from '@shared/weapons.js'
 import { MODES, SD, SD_SITES, otherTeam, sdSiteAt } from '@shared/modes.js'
 import { parseGlbJson, extractMapData } from '@shared/mapdata.js'
 import { buildMapWorld, rayMap, lineOfSight } from '@shared/physics.js'
@@ -30,6 +30,7 @@ import { Audio } from './audio.js'
 import { Hud } from './hud.js'
 import { Net } from './net.js'
 import { LoadoutMenu } from './loadout.js'
+import { Spectator } from './spectate.js'
 
 const BASE_FOV = 68
 const LEAN_ROLL = 0.18 // camera roll at a full lean, radians
@@ -44,6 +45,7 @@ const store = {
 
 const G = {
   state: 'loading', // loading | menu | connecting | playing
+  spectating: false, // joined to watch, on neither side
   myId: 0,
   team: null,
   deployed: false, // confirmed a loadout since joining / switching sides
@@ -105,6 +107,7 @@ let cars = null
 let cats = null
 let tanks = null
 let bikes = null
+const spec = new Spectator(camera, viewmodel, (o, d, len) => rayMap(RAPIER, world, o, d, len), BASE_FOV)
 
 function resize () {
   const w = window.innerWidth; const h = window.innerHeight
@@ -122,6 +125,7 @@ const nameInput = $('name-input')
 const sensInput = $('sens-input')
 const qualityInput = $('quality-input')
 const deployBtn = $('btn-deploy')
+const watchBtn = $('btn-watch')
 const menuStatus = $('menu-status')
 
 nameInput.value = params.get('name') || store.get('name', '')
@@ -171,12 +175,18 @@ function savedLoadout (team) {
 
 nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') deploy() })
 deployBtn.addEventListener('click', () => deploy())
+watchBtn.addEventListener('click', () => deploy(true))
 $('pause').addEventListener('click', () => { if (G.state === 'playing') input.lock() })
 $('btn-loadout').addEventListener('click', (e) => { e.stopPropagation(); openLoadout() })
 $('btn-leave').addEventListener('click', (e) => { e.stopPropagation(); leave('Left the match') })
 $('btn-bots').addEventListener('click', (e) => { e.stopPropagation(); net.emit('bots', { on: !G.match.bots }, true) })
 $('btn-tanks').addEventListener('click', (e) => { e.stopPropagation(); net.emit('tanks', { on: !G.match.tanks }, true) })
 $('btn-mode').addEventListener('click', (e) => { e.stopPropagation(); net.emit('mode', { mode: G.match.mode === 'sd' ? 'tdm' : 'sd' }, true) })
+// from the field to the stands and back; the click also takes the pointer for the spectator camera
+$('btn-spectate').addEventListener('click', () => net.emit('spectate', {}, true))
+for (const team of ['allies', 'axis']) {
+  $(`btn-join-${team}`).addEventListener('click', (e) => { e.stopPropagation(); net.emit('team', { team }, true) })
+}
 canvas.addEventListener('click', () => { if (G.state === 'playing' && !input.locked) input.lock() })
 
 function setStatus (text, error = false) {
@@ -189,29 +199,42 @@ function showMenu (v) {
   hud.show(!v)
 }
 
-async function deploy () {
+// spectate: join to watch, on neither side
+async function deploy (spectate = false) {
   if (G.state !== 'menu') return
   const name = nameInput.value.trim() || `Soldier${Math.floor(Math.random() * 900 + 100)}`
   store.set('name', name)
   audio.unlock()
   input.enterFullscreen()
   G.state = 'connecting'
-  deployBtn.disabled = true
-  deployBtn.textContent = 'Connecting…'
+  deployBtn.disabled = watchBtn.disabled = true
+  ;(spectate ? watchBtn : deployBtn).textContent = 'Connecting…'
   setStatus('Establishing UDP channel…')
   try {
     await net.connect()
   } catch (err) {
     console.warn('connect failed', err)
     G.state = 'menu'
-    deployBtn.disabled = false
-    deployBtn.textContent = 'Deploy'
+    menuReady()
     setStatus(err?.message || 'Could not connect to the server', true)
     return
   }
   setStatus('Joining match…')
+  if (spectate) { net.emit('join', { name, spectate: true }, true); return }
   const team = teamPref === 'auto' ? undefined : teamPref
   net.emit('join', { name, team, loadout: savedLoadout(team || store.get('lastTeam', 'allies')) }, true)
+}
+
+function menuReady () {
+  deployBtn.disabled = watchBtn.disabled = false
+  deployBtn.textContent = 'Deploy'
+  watchBtn.textContent = 'Spectate'
+}
+
+function setPauseMode () {
+  $('pause').classList.toggle('spectator', G.spectating)
+  $('pause-title').textContent = G.spectating ? 'Spectating' : 'Paused'
+  $('pause-text').textContent = G.spectating ? 'Click to keep watching' : 'Click to return to the fight'
 }
 
 // ------------------------------------------------------------------ loadout
@@ -226,7 +249,7 @@ const loadoutLabel = (l) => `${CLASSES[l.cls].name} · ${WEAPONS[l.primary].name
 const sameLoadout = (a, b) => a && b && a.cls === b.cls && a.primary === b.primary && a.secondary === b.secondary
 
 function openLoadout () {
-  if (G.state !== 'playing' || loadoutMenu.isOpen) return
+  if (G.state !== 'playing' || loadoutMenu.isOpen || G.spectating) return
   const cur = G.pending || G.loadout
   if (G.deployed) loadoutMenu.open(G.team, cur, 'change', cur)
   else loadoutMenu.open(G.team, savedLoadout(G.team) || G.loadout, 'deploy')
@@ -266,6 +289,10 @@ function leave (msg) {
   loadoutMenu.close()
   hud.scope(false)
   G.deployed = false
+  G.spectating = false
+  spec.reset()
+  hud.spectate(null)
+  setPauseMode()
   net.close()
   input.unlock()
   input.exitFullscreen()
@@ -286,8 +313,7 @@ function leave (msg) {
   G.roster.clear()
   showMenu(true)
   hud.pause(false)
-  deployBtn.disabled = false
-  deployBtn.textContent = 'Deploy'
+  menuReady()
   setStatus(msg || '')
 }
 
@@ -309,26 +335,41 @@ input.onLockChange = (locked, error) => {
 
 net.onDisconnect = () => { if (G.state === 'playing' || G.state === 'connecting') leave('Disconnected from server') }
 
+// on joining, and on going from playing to spectating or back (same id, new side)
 net.on('welcome', (d) => {
   G.myId = d.id
-  G.team = d.team
-  G.loadout = d.loadout
+  G.spectating = !!d.spectator
+  G.team = d.team ?? null
+  G.loadout = d.loadout ?? null
   G.pending = null
   G.deployed = false
   G.firstSpawn = true
-  store.set('lastTeam', d.team)
+  if (d.team) store.set('lastTeam', d.team)
   if (player) { player.life = 0; player.alive = false; player.deathPos = null }
   stopDriving()
+  avatars.clear() // name tags and friend / foe depend on our side, or having none
+  spec.reset()
   setRoster(d.roster, d.match)
   drops.clear()
   for (const dr of d.drops || []) drops.add(dr)
-  viewmodel.setTeam(d.team)
   hud.setTeam(d.team)
+  hud.scope(false)
+  hud.death(false)
+  setPauseMode()
   G.state = 'playing'
   input.enabled = true
   showMenu(false)
-  hud.show(false) // until deployed
   setStatus('')
+  if (G.spectating) {
+    loadoutMenu.close()
+    hud.show(true)
+    input.lock()
+    if (!input.locked) hud.pause(true)
+    return
+  }
+  hud.spectate(null)
+  viewmodel.setTeam(d.team)
+  hud.show(false) // until deployed
   if (params.has('autojoin')) requestLoadout(savedLoadout(d.team) || d.loadout)
   else openLoadout()
 })
@@ -371,7 +412,11 @@ net.on('loadout', (d) => {
 })
 
 net.on('team', (d) => {
-  if (d.denied) { loadoutMenu.status(d.denied, true); return }
+  if (d.denied) {
+    if (loadoutMenu.isOpen) loadoutMenu.status(d.denied, true)
+    else hud.notice(d.denied)
+    return
+  }
   G.team = d.team
   G.loadout = d.loadout
   G.pending = null
@@ -479,17 +524,18 @@ function setRoster (players, match) {
   if (match.bomb) bomb.place(match.bomb.p, match.roundState === 'live' ? match.msLeft : null)
   else bomb.remove()
   if (prev.state === 'playing' && match.state === 'ended') {
-    const txt = match.winner === 'draw' ? 'DRAW' : match.winner === G.team ? 'VICTORY' : 'DEFEAT'
+    const txt = match.winner === 'draw' ? 'DRAW' : !G.team ? `${TEAMS[match.winner].name.toUpperCase()} WIN` : match.winner === G.team ? 'VICTORY' : 'DEFEAT'
     const sub = match.winner === 'draw' ? 'The match ended in a draw' : `${TEAMS[match.winner]?.name} win ${match.scores.allies} – ${match.scores.axis}`
     hud.center(`${txt}<small>${sub} · next ${match.mode === 'sd' ? 'match' : 'round'} in ${match.timeLeft}s</small>`, MATCH.intermission)
   } else if (match.mode === 'sd' && match.state === 'playing') {
     if (match.roundState === 'live' && (match.round !== prev.round || prev.mode !== 'sd')) {
-      const task = match.attackers === G.team ? 'Attack: plant the bomb at site A or B' : 'Defend sites A and B'
+      const task = !G.team ? `The ${TEAMS[match.attackers].name} attack` : match.attackers === G.team ? 'Attack: plant the bomb at site A or B' : 'Defend sites A and B'
       hud.center(`ROUND ${match.round}<small>${task}</small>`, 3.5)
     } else if (match.roundState === 'over' && prev.roundState === 'live') {
       const loser = otherTeam(match.roundWinner)
       const why = { eliminated: `The ${TEAMS[loser].name} were wiped out`, time: 'Time ran out', bomb: 'The bomb went off', defused: 'The bomb was defused' }[match.reason]
-      hud.center(`${match.roundWinner === G.team ? 'ROUND WON' : 'ROUND LOST'}<small>${why} · ${match.scores.allies} – ${match.scores.axis}</small>`, SD.roundOver)
+      const result = !G.team ? `${TEAMS[match.roundWinner].name.toUpperCase()} WIN THE ROUND` : match.roundWinner === G.team ? 'ROUND WON' : 'ROUND LOST'
+      hud.center(`${result}<small>${why} · ${match.scores.allies} – ${match.scores.axis}</small>`, SD.roundOver)
     }
   }
 }
@@ -514,7 +560,7 @@ net.on('bomb', (d) => {
       const at = pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 3, 0.2 + i * 0.6, (Math.random() - 0.5) * 3))
       effects.explosion(at, i === 0 ? scorch : null)
     }
-    const dist = pos.distanceTo(player.eyePos(tmpV))
+    const dist = pos.distanceTo(earPos())
     audio.explosion(pos, dist)
     if (player.alive) G.shake = Math.max(G.shake, Math.max(0, 1 - dist / 50) ** 2)
   }
@@ -577,10 +623,11 @@ net.on('shot', (d) => {
   if (G.state !== 'playing' || d.id === G.myId) return
   const a = avatars.map.get(d.id)
   a?.showFlash()
+  spec.onShot(d.id)
   const o = new THREE.Vector3(...d.o)
   const e = new THREE.Vector3(...d.e)
   const myEye = player.eyePos(new THREE.Vector3())
-  audio.shot(d.w, o, o.distanceTo(myEye))
+  audio.shot(d.w, o, o.distanceTo(earPos()))
   effects.tracer(o.clone().addScaledVector(e.clone().sub(o).normalize(), 0.8), e, tracerSpeed(d.w) * 0.72)
   // impact decal where the bullet stopped (if it stopped on map geometry)
   const len = o.distanceTo(e)
@@ -602,6 +649,7 @@ net.on('shot', (d) => {
 net.on('nade', (d) => {
   if (G.state !== 'playing' || !grenades) return
   grenades.spawn(`${d.id}:${d.k}`, d.o, d.d, d.f)
+  if (d.d) spec.onNade(d.id)
 })
 
 net.on('boom', (d) => {
@@ -611,7 +659,7 @@ net.on('boom', (d) => {
   const below = rayMap(RAPIER, world, [pos.x, pos.y + 0.2, pos.z], [0, -1, 0], 0.8)
   const scorch = below && below.normal[1] > 0.5 ? { point: new THREE.Vector3(pos.x, pos.y + 0.2 - below.dist, pos.z), normal: below.normal } : null
   effects.explosion(pos.clone().setY(pos.y + 0.15), scorch)
-  const dist = pos.distanceTo(player.eyePos(tmpV))
+  const dist = pos.distanceTo(earPos())
   audio.explosion(pos, dist)
   if (player.alive) G.shake = Math.max(G.shake, Math.max(0, 1 - dist / 30) ** 2)
 })
@@ -631,6 +679,7 @@ net.on('stab', (d) => {
   const a = avatars.map.get(d.id)
   if (!a?.alive) return
   a.stab()
+  spec.onStab(d.id)
   audio.knifeSwing(a.pos.clone().setY(a.pos.y + 1.2))
 })
 
@@ -694,6 +743,10 @@ const tracerSpeed = (id) => 150 + (WEAPONS[id]?.velocity ?? 685) * 0.4
 
 const tmpV = new THREE.Vector3()
 const tmpO = new THREE.Vector3()
+const tmpEar = new THREE.Vector3()
+
+// where we hear the world from: our own head, or the camera when watching
+const earPos = () => player?.alive ? player.eyePos(tmpEar) : camera.position
 const muzzle = new THREE.Vector3()
 
 // random direction inside a cone of half-angle `spread` around forward
@@ -855,9 +908,8 @@ async function boot () {
     progress(1, 'Ready')
     $('loading').classList.add('hidden')
     G.state = 'menu'
-    deployBtn.disabled = false
-    deployBtn.textContent = 'Deploy'
-    if (params.has('autojoin')) deploy()
+    menuReady()
+    if (params.has('autojoin')) deploy(params.has('spectate'))
   } catch (err) {
     console.error(err)
     text.textContent = `Failed to load: ${err.message || err}`
@@ -885,7 +937,9 @@ function frame () {
     if (input.wasPressed('KeyB')) { if (loadoutMenu.isOpen) closeLoadout(); else openLoadout() }
     if (input.wasPressed('Escape')) closeLoadout()
   }
-  if (G.state === 'playing' && player && G.deployed) updateGame(dt, now)
+  spec.firstPerson = false
+  if (G.state === 'playing' && G.spectating) updateSpectating(dt, now)
+  else if (G.state === 'playing' && player && G.deployed) updateGame(dt, now)
   else {
     updateMenuCamera(dt)
     if (G.state === 'playing') avatars.update(dt, INTERP_DELAY)
@@ -904,7 +958,7 @@ function frame () {
   cars?.cull(camera)
   renderer.clear()
   renderer.render(scene, camera)
-  if (G.state === 'playing' && player?.alive && !G.driving && !G.riding) viewmodel.render(renderer, 58 - (BASE_FOV - fovCurrent) * 0.35, scene, camera)
+  if (G.state === 'playing' && ((player?.alive && !G.driving && !G.riding) || spec.firstPerson)) viewmodel.render(renderer, 58 - (BASE_FOV - fovCurrent) * 0.35, scene, camera)
   if (G.trace) G.trace.push([now, camera.position.x, camera.position.y, camera.position.z])
   input.endFrame()
 }
@@ -935,8 +989,11 @@ function updateGame (dt, now) {
   if (player.alive) player.look(lookDX, lookDY)
 
   const canAct = player.alive && locked && G.match.state === 'playing' && !loadoutMenu.isOpen
+  const sd = G.match.mode === 'sd'
+  // Search and Destroy keeps the fallen out until the next round: after a moment they watch their own side
+  const watching = sd && !player.alive && !G.driving && !G.riding && (!player.deathPos || now - player.deathAt > 3000)
   // Search and Destroy: hold F to plant or defuse; the server decides whether it counts, and we hold still meanwhile
-  const sdLive = G.match.mode === 'sd' && G.match.roundState === 'live'
+  const sdLive = sd && G.match.roundState === 'live'
   const acting = !!G.act
   // F also climbs into our side's tank or onto its motorcycle when standing beside it, and out again
   const mounted = G.driving || G.riding
@@ -950,27 +1007,24 @@ function updateGame (dt, now) {
   const wantUse = canAct && !mounted && !board && !mount && sdLive && input.down('KeyF')
   if (wantUse !== G.useHeld) { G.useHeld = wantUse; net.emit('use', { on: wantUse }, true) }
 
+  // remote players (before the camera, which may be following one of them)
+  avatars.update(dt, INTERP_DELAY)
+
   if (G.driving) driveTank(dt, now, G.driving, canAct)
   else if (G.riding) rideBike(dt, now, G.riding)
-  else moveOnFoot(dt, now, canAct, acting)
-
-  // remote players
-  avatars.update(dt, INTERP_DELAY)
+  else moveOnFoot(dt, now, canAct, acting, watching)
+  if (!watching) hud.spectate(null)
 
   // audio listener
   const fwd = camera.getWorldDirection(tmpV)
   audio.setListener(camera.position, fwd)
 
-  hud.update(dt)
-  hud.scores(G.match, G.team)
-  const secs = (G.matchEndsLocal - now) / 1000
-  const sd = G.match.mode === 'sd'
-  hud.timer(secs, G.match.state === 'playing' && (sd ? sdLive && (!!G.match.bomb || secs <= 15) : secs <= 60))
+  matchClock(dt, now)
   const next = G.pending ? `Next spawn: ${loadoutLabel(G.pending)}` : 'Press B to change loadout'
   if (sd) {
-    // between rounds the result banner takes the centre of the screen
+    // between rounds the result banner takes the centre of the screen; once watching, the spectator bar says it
     const title = player.deathPos ? 'You were killed' : 'Round in progress'
-    hud.death(!player.alive && G.match.state === 'playing' && G.match.roundState === 'live', player.deathPos ? G.killerName : '', 0, next, title, 'You join in at the start of the next round')
+    hud.death(!watching && !player.alive && G.match.state === 'playing' && G.match.roundState === 'live', player.deathPos ? G.killerName : '', 0, next, title, 'You join in at the start of the next round')
   } else {
     hud.death(!player.alive && player.deathPos && G.match.state === 'playing', G.killerName, (G.respawnAt - now) / 1000, next)
   }
@@ -978,27 +1032,95 @@ function updateGame (dt, now) {
   const sites = updateObjectives(now, sdLive, acting, prompt)
   hud.scoreboard(input.down('Tab') || G.match.state === 'ended', G.roster, G.match, G.myId, G.aliveIds)
   hud.netstat(G.myPing, G.fps)
+  const centre = watching ? camera.position : player.pos
+  hud.compass(centre, player.alive ? player.yaw : camera.rotation.y, compassMarks(now, G.team, false), sites)
+}
+
+// scores, timer and the centre banner's countdown
+function matchClock (dt, now) {
+  hud.update(dt)
+  hud.scores(G.match, G.team)
+  const secs = (G.matchEndsLocal - now) / 1000
+  const live = G.match.mode === 'sd' && G.match.roundState === 'live'
+  hud.timer(secs, G.match.state === 'playing' && (G.match.mode === 'sd' ? live && (!!G.match.bomb || secs <= 15) : secs <= 60))
+}
+
+// soldiers and tanks for the minimap, friendly to `team`; all: the other side too, not only while firing (spectators)
+function compassMarks (now, team, all) {
   const others = []
   for (const a of avatars.map.values()) {
     if (!a.alive || a.inTank) continue
-    const friendly = a.team === G.team
+    const friendly = a.team === team
     // COD2 compass: enemies only show up while firing
-    if (!friendly && !(a.flags & 16)) continue
+    if (!friendly && !all && !(a.flags & 16)) continue
     others.push({ x: a.pos.x, z: a.pos.z, friendly })
   }
   for (const t of tanks?.map.values() ?? []) {
     if (t.destroyed || t === G.driving) continue
-    const friendly = t.team === G.team
-    if (!friendly && now - t.firedAt > 2000) continue
+    const friendly = t.team === team
+    if (!friendly && !all && now - t.firedAt > 2000) continue
     others.push({ x: t.pos[0], z: t.pos[2], friendly, tank: true })
   }
+  // free motorcycles: ours, or everyone's for a spectator
   for (const b of bikes?.map.values() ?? []) {
-    if (b.team === G.team && !b.destroyed && !b.driver) others.push({ x: b.pos[0], z: b.pos[2], friendly: true, bike: true })
+    if (b.destroyed || b.driver || (b.team !== team && !all)) continue
+    others.push({ x: b.pos[0], z: b.pos[2], friendly: b.team === team, bike: true })
   }
-  hud.compass(player.pos, player.alive ? player.yaw : camera.rotation.y, others, sites)
+  return others
 }
 
-function moveOnFoot (dt, now, canAct, acting) {
+// ------------------------------------------------------------------ spectating
+
+const SPEC_FREE_KEYS = '<kbd>WASD</kbd> fly &middot; <kbd>Space</kbd> / <kbd>C</kbd> up / down &middot; <kbd>Shift</kbd> faster &middot; <kbd>LMB</kbd> follow a soldier'
+const followKeys = (view) => `<kbd>LMB</kbd> / <kbd>RMB</kbd> next / previous &middot; <kbd>Space</kbd> ${view.mode === 'third' ? 'first' : 'third'} person`
+
+// who the spectator bar names: the soldier followed, their weapon (or tank) and health
+function watchInfo (view) {
+  const a = view?.target
+  if (!a) return { name: '' }
+  const weapon = a.inTank ? tankSide(a.team).name : a.onBike ? bikeSide(a.team).name : WEAPONS[WEAPON_LIST[a.weapon]]?.name ?? ''
+  return { name: a.name, team: a.team, weapon, hp: a.alive ? a.hp : 0 }
+}
+
+// the spectator camera's field of view, scope and listener (view: null for the overview orbit)
+function watchCamera (view) {
+  const fov = view?.fov || BASE_FOV
+  if (fov !== fovCurrent) { fovCurrent = fov; camera.fov = fov; camera.updateProjectionMatrix() }
+  hud.scope(!!view?.scoped)
+  camera.updateMatrixWorld()
+  audio.setListener(camera.position, camera.getWorldDirection(tmpV))
+}
+
+// fallen in Search and Destroy: follow the teammates still standing, or watch from above when there are none
+function watchTeammates (dt, now) {
+  const view = spec.update({ avatars, tanks, input: input.locked ? input : null, look: [lookDX, lookDY], pool: (a) => a.team === G.team, canFree: false, bounds: mapData.bounds, dt, now })
+  if (!view) updateMenuCamera(dt)
+  watchCamera(view)
+  const sub = player.deathPos
+    ? `Killed${G.killerName ? ` by ${G.killerName}` : ''} · back in next round`
+    : 'Round in progress · you join in at the start of the next round'
+  const keys = `${view ? `${followKeys(view)} &middot; ` : ''}<kbd>B</kbd> loadout`
+  hud.spectate({ ...watchInfo(view), sub, keys })
+}
+
+// spectators: follow anyone on either side, or fly the free camera
+function updateSpectating (dt, now) {
+  const [dx, dy] = input.consumeLook()
+  avatars.update(dt, INTERP_DELAY)
+  const view = spec.update({ avatars, tanks, input: input.locked ? input : null, look: [dx, dy], pool: () => true, canFree: true, bounds: mapData.bounds, dt, now })
+  watchCamera(view)
+  const keys = view.mode === 'free' ? SPEC_FREE_KEYS : `${followKeys(view)} &middot; <kbd>F</kbd> free camera`
+  hud.spectate({ ...watchInfo(view), keys: `${keys} &middot; <kbd>Esc</kbd> join a side` })
+  hud.health(0, false) // no pain vignette
+  matchClock(dt, now)
+  const team = view.target?.team ?? null
+  const sites = updateObjectives(now, G.match.mode === 'sd' && G.match.roundState === 'live', false, '', team)
+  hud.scoreboard(input.down('Tab') || G.match.state === 'ended', G.roster, G.match, G.myId, G.aliveIds)
+  hud.netstat(G.myPing, G.fps)
+  hud.compass(camera.position, camera.rotation.y, compassMarks(now, team ?? 'allies', true), sites)
+}
+
+function moveOnFoot (dt, now, canAct, acting, watching) {
   hud.tankGun(null)
   hud.gunSight(null)
   audio.engine(0)
@@ -1060,6 +1182,8 @@ function moveOnFoot (dt, now, canAct, acting) {
       camera.rotation.y += (Math.random() - 0.5) * 0.06 * G.shake
     }
     deathRoll = 0
+  } else if (watching) {
+    watchTeammates(dt, now)
   } else if (player.deathPos) {
     // slump to the ground
     const k = Math.min(1, (now - player.deathAt) / 600)
@@ -1067,14 +1191,12 @@ function moveOnFoot (dt, now, canAct, acting) {
     camera.position.y -= (PLAYER.eye - 0.35) * k * k
     deathRoll += (0.45 - deathRoll) * Math.min(1, dt * 5)
     camera.rotation.set(player.pitch * (1 - k) - 0.15 * k, player.yaw, deathRoll)
-    // no respawn in Search and Destroy: after a moment, watch the round from above instead
-    if (G.match.mode === 'sd' && now - player.deathAt > 3000) updateMenuCamera(dt)
   } else {
     updateMenuCamera(dt)
   }
   G.shake *= Math.exp(-dt * 4)
   const targetFov = BASE_FOV + (ws.def.adsFov - BASE_FOV) * ws.adsT
-  if (Math.abs(targetFov - fovCurrent) > 0.01) {
+  if (!watching && Math.abs(targetFov - fovCurrent) > 0.01) {
     fovCurrent = targetFov
     camera.fov = fovCurrent
     camera.updateProjectionMatrix()
@@ -1115,7 +1237,16 @@ function moveOnFoot (dt, now, canAct, acting) {
     net.emit('st', [player.life, r2(p.x), r2(p.y), r2(p.z), Math.round(player.yaw * 1000) / 1000, Math.round(player.pitch * 1000) / 1000, flags, ws.index, Math.round(now), r2(player.lean)])
   }
 
-  // viewmodel (hidden behind the scope overlay when a scoped rifle is fully raised)
+  // viewmodel (hidden behind the scope overlay when a scoped rifle is fully raised); the spectator camera poses its own
+  if (!watching) updateViewmodel(dt, ws)
+
+  hud.health(player.hp, player.alive)
+  hud.weapon(ws)
+  const spread = ws.spread({ speed: player.speed, grounded: player.grounded, crouched: player.crouched })
+  hud.crosshair(spread, fovCurrent, player.alive && ws.adsT < 0.5 && !ws.reloading && ws.sprintT < 0.5 && !ws.busy, player.alive ? crosshairTarget() : null)
+}
+
+function updateViewmodel (dt, ws) {
   const scoped = player.alive && ws.def.scope && ws.adsT > 0.85
   viewmodel.scoped = scoped
   hud.scope(scoped)
@@ -1138,11 +1269,6 @@ function moveOnFoot (dt, now, canAct, acting) {
     lookDY,
     alive: player.alive
   })
-
-  hud.health(player.hp, player.alive)
-  hud.weapon(ws)
-  const spread = ws.spread({ speed: player.speed, grounded: player.grounded, crouched: player.crouched })
-  hud.crosshair(spread, fovCurrent, player.alive && ws.adsT < 0.5 && !ws.reloading && ws.sprintT < 0.5 && !ws.busy, player.alive ? crosshairTarget() : null)
 }
 
 function leanRoom (side) {
@@ -1294,7 +1420,8 @@ const markV = new THREE.Vector3()
 
 // Search and Destroy HUD: round line, use prompt, plant / defuse bar and the site markers; returns the minimap marks
 // extra: a prompt to show when Search and Destroy has none (the tank)
-function updateObjectives (now, live, acting, extra = '') {
+// team: whose side the markers are told from (null: a spectator in the free camera, neither)
+function updateObjectives (now, live, acting, extra = '', team = G.team) {
   const m = G.match
   if (m.mode !== 'sd' || !m.attackers || m.state !== 'playing') {
     hud.roundInfo('', false)
@@ -1304,10 +1431,10 @@ function updateObjectives (now, live, acting, extra = '') {
     return []
   }
   const defenders = otherTeam(m.attackers)
-  const attacking = G.team === m.attackers
+  const attacking = team === m.attackers
   const b = m.bomb
-  const role = b ? `Bomb planted at ${b.s}` : attacking ? 'You are attacking' : 'You are defending'
-  hud.roundInfo(`Round ${m.round} of ${SD.halftime * 2} &middot; ${TEAMS[m.attackers].name} attack &middot; <b>${role}</b>`, !!b)
+  const role = b ? `Bomb planted at ${b.s}` : !G.team ? '' : attacking ? 'You are attacking' : 'You are defending'
+  hud.roundInfo(`Round ${m.round} of ${SD.halftime * 2} &middot; ${TEAMS[m.attackers].name} attack${role ? ` &middot; <b>${role}</b>` : ''}`, !!b)
 
   let prompt = ''
   if (live && player.alive && !acting) {
@@ -1323,8 +1450,8 @@ function updateObjectives (now, live, acting, extra = '') {
   hud.act(G.act ? (now - G.act.at) / G.act.ms : -1, G.act?.k === 'plant' ? 'Planting the bomb' : 'Defusing the bomb')
 
   const targets = b
-    ? [{ key: 'bomb', pos: b.p, text: b.s, sub: attacking ? 'Guard' : 'Defuse', cls: 'bomb', color: '#ff5b4a' }]
-    : SD_SITES[defenders].map((s) => ({ key: s.id, pos: s.pos, text: s.id, sub: attacking ? 'Attack' : 'Defend', cls: attacking ? 'attack' : 'defend', color: attacking ? '#ffb35a' : '#8fd8ff' }))
+    ? [{ key: 'bomb', pos: b.p, text: b.s, sub: !team ? 'Bomb' : attacking ? 'Guard' : 'Defuse', cls: 'bomb', color: '#ff5b4a' }]
+    : SD_SITES[defenders].map((s) => ({ key: s.id, pos: s.pos, text: s.id, sub: !team ? 'Site' : attacking ? 'Attack' : 'Defend', cls: attacking ? 'attack' : 'defend', color: attacking ? '#ffb35a' : '#8fd8ff' }))
   const marks = []
   const w = window.innerWidth; const h = window.innerHeight
   for (const t of live ? targets : []) {
@@ -1364,6 +1491,8 @@ window.__labin = {
   },
   state: () => ({
     state: G.state,
+    spectating: G.spectating,
+    spec: { target: spec.targetId, third: spec.third, free: spec.free, firstPerson: spec.firstPerson },
     locked: input.locked,
     hits: G.hits,
     shots: G.shots,

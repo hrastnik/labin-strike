@@ -1213,3 +1213,91 @@ test('bikes: in S&D every round starts with both bikes whole, home and empty', (
   assert.equal(bike('allies').destroyed, false)
   endTanks(ax, al)
 })
+
+// ------------------------------------------------------------------ spectators
+
+test('a spectator joins on neither side, is sent the match and cannot act in it', () => {
+  const sp = connect('Xray', { spectate: true })
+  const w = sp.last('welcome')
+  assert.equal(w.spectator, true)
+  assert.equal(w.team, undefined)
+  assert.equal(game.players.has(w.id), false)
+  assert.equal(game.spectators.get(w.id).name, 'Xray')
+  assert.deepEqual(w.roster.find((r) => r.id === w.id), { id: w.id, name: 'Xray', team: 'spectator', bot: false, k: 0, d: 0, ping: 0 })
+  for (const team of ['allies', 'axis']) {
+    assert.equal([...game.players.values()].filter((p) => p.team === team).length, Math.ceil(MATCH.targetPlayers / 2), 'bots fill both sides as if nobody watched')
+  }
+  game.broadcastSnapshot()
+  assert.ok(sp.last('snap').p.length > 0, 'a spectator alone still gets snapshots')
+
+  clock += 10000
+  sp.send('bots', { on: false })
+  sp.send('mode', { mode: 'sd' })
+  sp.send('tanks', { on: true })
+  sp.send('loadout', { ...ALLIES_KIT, deploy: true })
+  sp.send('fire', { w: 'thompson', o: [0, 1.6, 0], e: [0, 1.6, -5] })
+  assert.deepEqual([game.botsEnabled, game.mode, game.tanksEnabled], [true, 'tdm', false])
+  assert.equal(game.players.has(w.id), false)
+
+  const other = connect('Yoke', { team: 'axis' })
+  assert.match(sp.last('notice').m, /Yoke joined the Axis/)
+  other.disconnect()
+  sp.disconnect()
+  assert.equal(game.spectators.size, 0)
+})
+
+test('a spectator takes a side with the same id, and a player steps out to watch keeping the score', () => {
+  const sp = connect('Yankee', { spectate: true })
+  const id = sp.last('welcome').id
+  clock += 10000
+  sp.send('team', { team: 'axis' })
+  const w = sp.last('welcome')
+  assert.deepEqual([w.id, w.team, w.spectator], [id, 'axis', undefined])
+  assert.ok(isValidLoadout('axis', w.loadout))
+  assert.equal(game.spectators.has(id), false)
+  const p = deploy(sp, AXIS_KIT)
+  assert.equal(p.id, id)
+  assert.equal(p.alive, true)
+  p.kills = 3; p.deaths = 1
+
+  sp.send('spectate')
+  assert.match(sp.last('team').denied, /Wait/)
+  assert.equal(game.players.has(id), true)
+  clock += MATCH.teamSwitchCooldown * 1000
+  sp.send('spectate')
+  assert.equal(sp.last('welcome').spectator, true)
+  assert.equal(game.players.has(id), false)
+  assert.equal(sp.player, null)
+  assert.deepEqual(game.roster().find((r) => r.id === id), { id, name: 'Yankee', team: 'spectator', bot: false, k: 3, d: 1, ping: 0 })
+
+  // taking a side is balanced like joining: a stacked side is refused, no preference auto-assigns
+  const other = connect('Zulu', { team: 'allies' })
+  clock += MATCH.teamSwitchCooldown * 1000
+  sp.send('team', { team: 'allies' })
+  assert.match(sp.last('team').denied, /unbalanced/)
+  sp.send('team', {})
+  assert.equal(sp.player.team, 'axis')
+  assert.deepEqual([sp.player.kills, sp.player.deaths], [3, 1])
+  other.disconnect(); sp.disconnect()
+})
+
+test('S&D: the fallen cannot step out to spectate and back in to play the round again', () => {
+  const { ax, al, a } = sdMatch()
+  const ch = connect('Echo', { team: 'allies' })
+  const c = deploy(ch, ALLIES_KIT)
+  assert.equal(c.alive, true, 'joined within the grace period')
+  c.protectUntil = 0
+  game.applyDamage(c, a, 500, 'mp40', 'body')
+  assert.equal(game.sd.state, 'live')
+  ch.send('spectate')
+  assert.equal(game.sd.state, 'live')
+  clock += MATCH.teamSwitchCooldown * 1000
+  ch.send('team', { team: 'allies' })
+  const back = deploy(ch, ALLIES_KIT)
+  assert.ok(game.now() - game.sd.startedAt < SD.joinGrace * 1000, 'still inside the grace period')
+  assert.equal(back.alive, false, 'already played this round')
+  game.sd.endRound('axis', 'time')
+  advance(SD.roundOver * 1000 + 100)
+  assert.equal(back.alive, true, 'back for the next round')
+  endSd(ax, al, ch)
+})

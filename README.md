@@ -16,7 +16,8 @@ A browser-based, low-poly multiplayer shooter (Team Deathmatch and Search and De
 **Allies vs Axis**, in two modes that any player can switch from the pause screen:
 
 - **Team Deathmatch.** First team to 50 kills, or the leading team when the 10-minute timer runs out.
-- **Search and Destroy.** Rounds without respawns. The attackers plant a demolition charge at one of the defenders' two sites (hold <kbd>F</kbd> for 4 s); the defenders stop them, or defuse it (7 s) before its 40 s fuse runs out. First to 6 rounds. Teams keep their weapons and spawns, so the attacking role swaps at halftime, and each side defends the sites on its own half. Bots plant, guard and defuse too
+- **Search and Destroy.** Rounds without respawns. The attackers plant a demolition charge at one of the defenders' two sites (hold <kbd>F</kbd> for 4 s); the defenders stop them, or defuse it (7 s) before its 40 s fuse runs out. First to 6 rounds. Teams keep their weapons and spawns, so the attacking role swaps at halftime, and each side defends the sites on its own half. Bots plant, guard and defuse too. Once you are down, you watch your teammates until the next round
+- **Spectating.** Hit **Spectate** on the menu to watch a match without playing, or pick it from the pause screen mid-match. You can follow anyone on either side through their eyes or over their shoulder, or fly a free camera. From the pause screen you can join either side whenever you like. Spectators are listed on the scoreboard
 
 Features:
 
@@ -49,7 +50,7 @@ npm run dev          # http://localhost:7344
 
 In dev, the Node server runs the game simulation and serves the client through Vite middleware, all on one port. Open the URL, pick a callsign (and optionally a side) and hit **Deploy**, then choose a class and weapons on the loadout screen. Open a second tab to play against yourself, or let the bots handle it.
 
-Handy URL params: `?name=Mateo` pre-fills the callsign, `?team=axis` picks a side, `?cls=support&primary=mg42&secondary=luger` preselects a loadout, and `?autojoin` deploys as soon as the map loads.
+Handy URL params: `?name=Mateo` pre-fills the callsign, `?team=axis` picks a side, `?cls=support&primary=mg42&secondary=luger` preselects a loadout, and `?autojoin` deploys as soon as the map loads (add `?spectate` to watch instead).
 
 ### Controls
 
@@ -63,6 +64,8 @@ Handy URL params: `?name=Mateo` pre-fills the callsign, `?team=axis` picks a sid
 | <kbd>Tab</kbd> | Scoreboard | <kbd>Esc</kbd> | Pause |
 | <kbd>V</kbd> | Knife | <kbd>B</kbd> | Loadout / switch side |
 | <kbd>Q</kbd> / <kbd>E</kbd> | Lean left / right | <kbd>F</kbd> | Get in / out of your side's tank or onto / off its motorcycle; hold to plant / defuse (Search and Destroy) |
+
+While spectating: <kbd>LMB</kbd> / <kbd>RMB</kbd> next / previous soldier, <kbd>Space</kbd> first / third person, <kbd>F</kbd> free camera (<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> and mouse, <kbd>Space</kbd> / <kbd>C</kbd> up / down, <kbd>Shift</kbd> faster), <kbd>Esc</kbd> join a side.
 
 ## How it works
 
@@ -108,7 +111,7 @@ Sidearms: Walther P38 and Luger P08 (Axis), M1911 and Webley Mk VI (Allies).
 ## Tests
 
 ```bash
-npm test             # weapon catalogue, faction rules, grenades, the server's loadout / fire / team / movement validation, Search and Destroy rounds, tanks and motorcycles
+npm test             # weapon catalogue, faction rules, grenades, the server's loadout / fire / team / movement validation, Search and Destroy rounds, spectators, tanks and motorcycles
 ```
 
 ## Production

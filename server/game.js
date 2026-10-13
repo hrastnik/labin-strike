@@ -32,6 +32,7 @@ export class Game {
     this.io = io
     this.root = root
     this.players = new Map()
+    this.spectators = new Map() // id -> { id, name, channel, ... }: connected, watching, not on either side
     this.grenades = []
     this.drops = []
     this.nextDropId = 1
@@ -79,22 +80,30 @@ export class Game {
 
   stats () {
     const all = [...this.players.values()]
-    return { humans: all.filter((p) => !p.isBot).length, bots: all.filter((p) => p.isBot).length, match: this.match?.state }
+    return { humans: all.filter((p) => !p.isBot).length, bots: all.filter((p) => p.isBot).length, spectators: this.spectators.size, match: this.match?.state }
   }
 
   humans () { return [...this.players.values()].filter((p) => !p.isBot) }
+
+  // anyone connected, playing or watching: the match runs (and snapshots go out) while someone is here
+  watched () { return this.spectators.size > 0 || this.humans().length > 0 }
 
   // ------------------------------------------------------------------ connections
 
   onConnection (channel) {
     channel.on('join', (data) => this.join(channel, data))
+    // spectators send nothing but 'team' (take a side), 'pong' and 'chat'; everything else needs channel.player
+    channel.on('spectate', () => { const p = channel.player; if (p) this.handleSpectate(p) })
     channel.on('st', (data) => { const p = channel.player; if (p) this.handleState(p, data) })
     channel.on('fire', (data) => { const p = channel.player; if (p) this.handleFire(p, data) })
     channel.on('cook', (data) => { const p = channel.player; if (p) this.handleCook(p, data) })
     channel.on('nade', (data) => { const p = channel.player; if (p) this.handleNade(p, data) })
     channel.on('knife', (data) => { const p = channel.player; if (p) this.handleKnife(p, data) })
     channel.on('loadout', (data) => { const p = channel.player; if (p) this.handleLoadout(p, data) })
-    channel.on('team', (data) => { const p = channel.player; if (p) this.handleTeam(p, data) })
+    channel.on('team', (data) => {
+      if (channel.spectator) this.enlist(channel.spectator, data?.team)
+      else if (channel.player) this.handleTeam(channel.player, data)
+    })
     channel.on('bots', (data) => { const p = channel.player; if (p) this.handleBots(p, data) })
     channel.on('mode', (data) => { const p = channel.player; if (p) this.handleMode(p, data) })
     channel.on('use', (data) => { const p = channel.player; if (p) this.sd?.use(p, data?.on) })
@@ -104,20 +113,29 @@ export class Game {
     channel.on('shell', (data) => { const p = channel.player; if (p) this.tanks.fire(p, data) })
     channel.on('bike', (data) => { const p = channel.player; if (p) data?.on ? this.bikes.enter(p) : this.bikes.exit(p) })
     channel.on('bk', (data) => { const p = channel.player; if (p) this.bikes.state(p, data) })
-    channel.on('pong', (data) => { const p = channel.player; if (p && data && typeof data.t === 'number') p.ping = Math.max(0, this.now() - data.t) })
+    channel.on('pong', (data) => { const p = channel.player || channel.spectator; if (p && data && typeof data.t === 'number') p.ping = Math.max(0, this.now() - data.t) })
     channel.on('chat', (data) => {
-      const p = channel.player
+      const p = channel.player || channel.spectator
       if (!p || typeof data?.m !== 'string') return
       this.emitAll('chat', { id: p.id, m: data.m.slice(0, 120) }, true)
     })
     channel.onDisconnect(() => this.leave(channel))
   }
 
+  // { name, team?, loadout?, spectate? }: spectate joins as a watcher on neither side
   join (channel, data) {
-    if (channel.player) return
+    if (channel.player || channel.spectator) return
     const name = String(data?.name || 'Soldier').replace(/[^\p{L}\p{N} ._\-]/gu, '').trim().slice(0, 16) || 'Soldier'
-    // the first human into an empty server gets a fresh round rather than a half-played bot match
-    if (!this.humans().length) this.restartMatch()
+    // the first one into an empty server gets a fresh round rather than a half-played bot match
+    if (!this.watched()) this.restartMatch()
+    if (data?.spectate) {
+      const s = this.addSpectator({ id: this.nextId++, name, channel })
+      console.log(`[game] ${name} is spectating (${s.id})`)
+      this.welcome(channel, s)
+      this.broadcastRoster()
+      this.emitAll('notice', { m: `${name} is spectating` }, true)
+      return
+    }
     // a requested team is honoured unless it would stack the humans; otherwise auto-balance
     const team = TEAM_IDS.includes(data?.team) && this.teamAllowed(data.team) ? data.team : this.chooseTeam()
     const p = this.createPlayer({ name, team, isBot: false, channel })
@@ -125,32 +143,87 @@ export class Game {
     channel.player = p
     console.log(`[game] ${name} joined ${team} (${p.id})`)
     this.balanceBots()
-    // humans pick (or confirm) a loadout before their first spawn: see handleLoadout
+    this.welcome(channel, p)
+    this.broadcastRoster()
+    this.emitAll('notice', { m: `${name} joined the ${team === 'allies' ? 'Allies' : 'Axis'}` }, true)
+  }
+
+  // humans pick (or confirm) a loadout before their first spawn: see handleLoadout. Spectators get no team or loadout
+  welcome (channel, p) {
     channel.emit('welcome', {
       id: p.id,
-      team,
-      loadout: p.loadout,
+      ...(p.spectator ? { spectator: true } : { team: p.team, loadout: p.loadout }),
       roster: this.roster(),
       match: this.matchInfo(),
       drops: this.drops.map((d) => this.dropInfo(d)),
       tick: TICK_RATE,
       snap: SNAPSHOT_RATE
     }, { reliable: true })
-    this.broadcastRoster()
-    this.emitAll('notice', { m: `${name} joined the ${team === 'allies' ? 'Allies' : 'Axis'}` }, true)
   }
 
   leave (channel) {
-    const p = channel.player
+    const p = channel.player || channel.spectator
     if (!p) return
     console.log(`[game] ${p.name} left`)
-    this.players.delete(p.id)
-    if (p.tank) this.tanks.eject(p.tank)
-    if (p.bike) this.bikes.eject(p.bike)
-    channel.player = null
+    if (p.spectator) this.spectators.delete(p.id)
+    else this.removePlayer(p)
+    channel.player = channel.spectator = null
     this.balanceBots()
     this.broadcastRoster()
     this.emitAll('notice', { m: `${p.name} left the game` }, true)
+  }
+
+  removePlayer (p) {
+    this.players.delete(p.id)
+    if (p.tank) this.tanks.eject(p.tank)
+    if (p.bike) this.bikes.eject(p.bike)
+  }
+
+  // kept: the id, the score and the S&D round last played (so stepping out and back in is no way to respawn early)
+  addSpectator ({ id, name, channel, kills = 0, deaths = 0, sdRound, lastTeamSwitch = -1e9 }) {
+    const s = { id, name, channel, spectator: true, ping: 0, kills, deaths, sdRound, lastTeamSwitch }
+    this.spectators.set(id, s)
+    channel.spectator = s
+    return s
+  }
+
+  // a player leaves the field to watch; like switching sides, this is not a death
+  handleSpectate (p) {
+    const now = this.now()
+    if (now - p.lastTeamSwitch < MATCH.teamSwitchCooldown * 1000) {
+      p.channel.emit('team', { team: p.team, loadout: p.pendingLoadout || p.loadout, denied: 'Wait a moment before switching again' }, { reliable: true })
+      return
+    }
+    this.removePlayer(p)
+    p.alive = false
+    p.channel.player = null
+    this.addSpectator({ ...p, lastTeamSwitch: now })
+    console.log(`[game] ${p.name} is spectating`)
+    this.balanceBots()
+    this.welcome(p.channel, this.spectators.get(p.id))
+    this.broadcastRoster()
+    this.emitAll('notice', { m: `${p.name} is spectating` }, true)
+  }
+
+  // a spectator takes a side (team: 'allies' | 'axis', anything else auto-assigns) and goes to the loadout screen
+  enlist (s, want) {
+    const now = this.now()
+    const deny = (m) => s.channel.emit('team', { team: null, denied: m }, { reliable: true })
+    if (now - s.lastTeamSwitch < MATCH.teamSwitchCooldown * 1000) return deny('Wait a moment before switching again')
+    let team = want
+    if (!TEAM_IDS.includes(team)) team = this.chooseTeam()
+    else if (!this.teamAllowed(team)) return deny('Teams would be unbalanced')
+    this.spectators.delete(s.id)
+    s.channel.spectator = null
+    const p = this.createPlayer({ id: s.id, name: s.name, team, isBot: false, channel: s.channel })
+    Object.assign(p, { kills: s.kills, deaths: s.deaths, sdRound: s.sdRound, lastTeamSwitch: now })
+    p.loadout = sanitizeLoadout(team, null)
+    s.channel.player = p
+    console.log(`[game] ${s.name} joined ${team} from spectating`)
+    this.balanceBots()
+    this.welcome(s.channel, p)
+    this.broadcastRoster()
+    this.emitAll('notice', { m: `${s.name} joined the ${team === 'allies' ? 'Allies' : 'Axis'}` }, true)
   }
 
   chooseTeam () {
@@ -170,9 +243,9 @@ export class Game {
     return h[team] <= h[other]
   }
 
-  createPlayer ({ name, team, isBot, channel }) {
+  createPlayer ({ id = this.nextId++, name, team, isBot, channel }) {
     const p = {
-      id: this.nextId++,
+      id,
       name,
       team,
       isBot,
@@ -698,7 +771,7 @@ export class Game {
 
   restartMatch () {
     this.match = { state: 'playing', scores: { allies: 0, axis: 0 }, endsAt: this.now() + MATCH.timeLimit * 1000, restartAt: 0, winner: null }
-    for (const p of this.players.values()) { p.kills = 0; p.deaths = 0 }
+    for (const p of [...this.players.values(), ...this.spectators.values()]) { p.kills = 0; p.deaths = 0 }
     this.tanks.newMatch()
     this.bikes.reset()
     this.emitAll('notice', { m: `New match: ${MODES[this.mode].name}` }, true)
@@ -736,8 +809,8 @@ export class Game {
     this.updateGrenades(dt, now)
     this.updateDrops(now)
     this.bikes.tick(now)
-    // with nobody connected the bots (and cats) idle instead of burning CPU
-    const anyHumans = this.humans().length > 0
+    // with nobody connected the bots (and cats) idle instead of burning CPU; a spectator alone still watches them play
+    const anyHumans = this.watched()
     if (anyHumans) this.cats.update(dt, now)
     for (const p of this.players.values()) {
       if (!p.alive) {
@@ -756,14 +829,16 @@ export class Game {
 
   emitAll (event, data, reliable = false) {
     for (const p of this.players.values()) if (!p.isBot) p.channel.emit(event, data, reliable ? { reliable: true } : undefined)
+    for (const s of this.spectators.values()) s.channel.emit(event, data, reliable ? { reliable: true } : undefined)
   }
 
   emitOthers (sender, event, data, reliable = false) {
     for (const p of this.players.values()) if (!p.isBot && p !== sender) p.channel.emit(event, data, reliable ? { reliable: true } : undefined)
+    for (const s of this.spectators.values()) s.channel.emit(event, data, reliable ? { reliable: true } : undefined)
   }
 
   broadcastSnapshot () {
-    if (!this.humans().length) return
+    if (!this.watched()) return
     const now = this.now()
     const list = []
     for (const p of this.players.values()) {
@@ -776,9 +851,10 @@ export class Game {
     this.emitAll('snap', { t: now, p: list, c: this.cats.snapshot(), k: this.tanks.snapshot(now), b: this.bikes.snapshot(now) })
   }
 
+  // spectators are listed with team 'spectator'
   roster () {
-    return [...this.players.values()].map((p) => ({
-      id: p.id, name: p.name, team: p.team, bot: p.isBot, k: p.kills, d: p.deaths, ping: p.isBot ? 0 : Math.round(p.ping)
+    return [...this.players.values(), ...this.spectators.values()].map((p) => ({
+      id: p.id, name: p.name, team: p.spectator ? 'spectator' : p.team, bot: !!p.isBot, k: p.kills, d: p.deaths, ping: p.isBot ? 0 : Math.round(p.ping)
     }))
   }
 

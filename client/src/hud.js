@@ -83,6 +83,10 @@ export class Hud {
       weaponHint: $('weapon-hint'),
       pickup: $('pickup'),
       death: $('death'),
+      spec: $('spec'),
+      specWho: $('spec-who'),
+      specSub: $('spec-sub'),
+      specKeys: $('spec-keys'),
       deathTitle: $('death-title'),
       deathBy: $('death-by'),
       deathRespawn: $('death-respawn'),
@@ -336,6 +340,21 @@ export class Hud {
     this.set('respawn', txt, (v) => { this.el.deathRespawn.textContent = v })
   }
 
+  // info: null, or what the spectator camera shows: { name, team, hp, weapon, sub, keys (html) }, name '' for none
+  spectate (info) {
+    this.set('spectating', !!info, (v) => {
+      this.el.hud.classList.toggle('spectating', v)
+      this.el.spec.classList.toggle('hidden', !v)
+    })
+    if (!info) return
+    const who = info.name
+      ? `<span class="${info.team}">${esc(info.name)}</span><small>${esc(info.weapon)}${info.hp != null ? ` &middot; ${Math.max(0, Math.round(info.hp))} HP` : ''}</small>`
+      : ''
+    this.set('specwho', who, (v) => { this.el.specWho.innerHTML = v })
+    this.set('specsub', info.sub || '', (v) => { this.el.specSub.textContent = v })
+    this.set('speckeys', info.keys, (v) => { this.el.specKeys.innerHTML = v })
+  }
+
   scoreboard (show, roster, match, myId, aliveSet) {
     this.el.scoreboard.classList.toggle('hidden', !show)
     if (!show) return
@@ -344,7 +363,9 @@ export class Hud {
     const table = (team) => `<table class="${team}"><caption>${TEAMS[team].name} &nbsp;${match.scores[team]}</caption><thead><tr><th>Name</th><th class="n">K</th><th class="n">D</th><th class="n">Ping</th></tr></thead><tbody>${rows(team)}</tbody></table>`
     const sd = match.mode === 'sd'
     const goal = sd ? `round ${match.round} &middot; first to ${match.scoreLimit} rounds` : `first to ${match.scoreLimit}`
-    const html = `<div class="sb-head"><div class="t">${MODES[match.mode ?? 'tdm'].name}</div><div class="s">Rudarska ulica &middot; ${goal}</div></div><div class="sb-cols">${table('allies')}${table('axis')}</div>`
+    const watching = [...roster.values()].filter((p) => p.team === 'spectator').map((p) => `<b>${esc(p.name)}</b>`).join(', ')
+    const html = `<div class="sb-head"><div class="t">${MODES[match.mode ?? 'tdm'].name}</div><div class="s">Rudarska ulica &middot; ${goal}</div></div><div class="sb-cols">${table('allies')}${table('axis')}</div>` +
+      (watching ? `<div class="sb-spec">Spectating: ${watching}</div>` : '')
     this.set('sbhtml', html, (v) => { this.el.scoreboard.innerHTML = v })
   }
 

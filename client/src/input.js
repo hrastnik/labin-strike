@@ -5,7 +5,7 @@ export class Input {
     this.canvas = canvas
     this.keys = new Set()
     this.pressed = new Set()
-    this.mouse = { dx: 0, dy: 0, left: false, right: false, leftPressed: false, wheel: 0 }
+    this.mouse = { dx: 0, dy: 0, left: false, right: false, leftPressed: false, rightPressed: false, wheel: 0 }
     this.locked = false
     this.sensitivity = 1
     this.onLockChange = null
@@ -32,7 +32,7 @@ export class Input {
     document.addEventListener('mousedown', (e) => {
       if (!this.locked) return
       if (e.button === 0) { this.mouse.left = true; this.mouse.leftPressed = true }
-      if (e.button === 2) this.mouse.right = true
+      if (e.button === 2) { this.mouse.right = true; this.mouse.rightPressed = true }
     })
     document.addEventListener('mouseup', (e) => {
       if (e.button === 0) this.mouse.left = false
@@ -91,7 +91,7 @@ export class Input {
 
   endFrame () {
     this.pressed.clear()
-    this.mouse.leftPressed = false
+    this.mouse.leftPressed = this.mouse.rightPressed = false
     this.mouse.wheel = 0
   }
 }

@@ -50,6 +50,8 @@
       <div id="pickup"></div>
     </div>
 
+    <div id="spec" class="hidden"><div class="who" id="spec-who"></div><div class="sub" id="spec-sub"></div><div class="keys" id="spec-keys"></div></div>
+
     <div id="death" class="hidden">
       <div class="title" id="death-title">You were killed</div>
       <div class="by" id="death-by"></div>
@@ -59,7 +61,7 @@
 
     <div id="scoreboard" class="hidden"></div>
     <div id="netstat"></div>
-    <div id="pause" class="hidden"><div class="box"><div class="title">Paused</div><div>Click to return to the fight</div><div class="pause-actions"><button id="btn-loadout" class="ghost">Change loadout <kbd>B</kbd></button><button id="btn-bots" class="ghost">Bots: on</button><button id="btn-tanks" class="ghost">Tanks: off</button><button id="btn-mode" class="ghost">Mode: TDM</button><button id="btn-leave" class="ghost">Leave match</button></div></div></div>
+    <div id="pause" class="hidden"><div class="box"><div class="title" id="pause-title">Paused</div><div id="pause-text">Click to return to the fight</div><div class="pause-actions"><button id="btn-loadout" class="ghost play-only">Change loadout <kbd>B</kbd></button><button id="btn-bots" class="ghost play-only">Bots: on</button><button id="btn-tanks" class="ghost play-only">Tanks: off</button><button id="btn-mode" class="ghost play-only">Mode: TDM</button><button id="btn-spectate" class="ghost play-only">Spectate</button><button id="btn-join-allies" class="ghost spec-only">Join the Allies</button><button id="btn-join-axis" class="ghost spec-only">Join the Axis</button><button id="btn-leave" class="ghost">Leave match</button></div></div></div>
   </div>
 
   <div id="loadout" class="hidden">
@@ -111,6 +113,7 @@
         <span>Fullscreen <small id="fullscreen-hint"></small></span>
       </label>
       <button id="btn-deploy" disabled>Loading&hellip;</button>
+      <button id="btn-watch" class="ghost" disabled>Spectate</button>
       <div id="menu-status"></div>
       <div id="loading"><div class="bar"><div class="fill" id="loading-fill"></div></div><div id="loading-text">Loading map&hellip;</div></div>
       <div class="controls">
