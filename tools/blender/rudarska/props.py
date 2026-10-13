@@ -195,20 +195,182 @@ def box_truck(x, y, yaw, z=0.0):
     collider('truck', P(2.25, 0, 1.4), (1.4, W - 0.1, 2.2), rz=yaw)
 
 
-def scooter(x, y, yaw, z=0.0):
-    mb = G['Vehicles.cars']
+def _se(t, n):
+    """superellipse coordinate sign(t) |t|^(2/n): n = 2 is an ellipse, larger n squarer."""
+    return math.copysign(abs(t) ** (2 / n), t)
 
-    def P(lx, ly, lz):
-        rx, ry = rot2(lx, ly, yaw)
-        return (x + rx, y + ry, z + lz)
-    for lx in (0.62, -0.6):
-        mb.cyl(P(lx, 0, 0.24), 0.24, 0.1, M['rubber'], seg=12, rx=math.pi / 2, rz=yaw)
-    mb.box(P(-0.2, 0, 0.55), (0.9, 0.36, 0.4), M['car_paints'][0], rz=yaw)
-    mb.box(P(-0.25, 0, 0.82), (0.7, 0.3, 0.12), M['plastic_black'], rz=yaw)
-    mb.box(P(0.4, 0, 0.35), (0.42, 0.3, 0.1), M['car_paints'][0], rz=yaw)
-    mb.tube([P(0.62, 0, 0.3), P(0.48, 0, 1.0)], 0.03, M['metal_dark'], seg=5)
-    mb.box(P(0.5, 0, 0.75), (0.16, 0.36, 0.5), M['car_paints'][0], rz=yaw)
-    mb.tube([P(0.46, -0.32, 1.05), P(0.46, 0.32, 1.05)], 0.018, M['metal_dark'], seg=5)
+
+def _sweep(mb, T, secs, m, seg=16, n=2.0, closed=False, warp=None, smooth=True):
+    """smooth closed shell through cross-sections (c, u, v, a, b[, d]) in a local frame: a superellipse (exponent n)
+    with half-axes a along u and b along v around c, its u-extremes pulled back along -v by d (a legshield's wrap,
+    a fender's skirt).  closed: the sections form a loop (a tyre), else the ends get flat caps.  warp(p) bends the
+    local points, T maps them to world.  Returns the rings of verts."""
+    bm = mb.bm
+    rings = []
+    for sec in secs:
+        c, u, v, a, b = (Vector(sec[0]), Vector(sec[1]), Vector(sec[2]), sec[3], sec[4])
+        d = sec[5] if len(sec) > 5 else 0.0
+        ring = []
+        for k in range(seg):
+            t = k / seg * math.tau
+            p = c + u * (a * _se(math.cos(t), n)) + v * (b * _se(math.sin(t), n) - d * math.cos(t) ** 2)
+            ring.append(bm.verts.new(T(warp(p) if warp else p)))
+        rings.append(ring)
+    faces = []
+    for i in range(len(rings) if closed else len(rings) - 1):
+        A, B = rings[i], rings[(i + 1) % len(rings)]
+        for k in range(seg):
+            faces.append(bm.faces.new((A[k], A[(k + 1) % seg], B[(k + 1) % seg], B[k])))
+    mb._tag(faces, m, smooth)
+    if not closed:
+        caps = [bm.faces.new(rings[0]), bm.faces.new(rings[-1])]
+        mb._tag(caps, m, False)
+        faces += caps
+    bmesh.ops.recalc_face_normals(bm, faces=faces)
+    return rings
+
+
+def _pod(mb, T, c, w, m, n=2.0, seg=10, k=5):
+    """ellipsoid around c: half-axes w = (dx, dy, dz) in the local frame (lamp lenses, the mirror heads)."""
+    c = Vector(c)
+    secs = []
+    for i in range(k):
+        th = math.pi * (i + 0.5) / k
+        s = math.sin(th)
+        secs.append((c + Vector((0, 0, -math.cos(th) * w[2])), (1, 0, 0), (0, 1, 0), w[0] * s, w[1] * s))
+    return _sweep(mb, T, secs, m, seg=seg, n=n)
+
+
+def scooter(x, y, yaw, z=0.0):
+    """a Vespa-style step-through scooter (proportions of a Primavera 125: 1.85 m long, 1.33 m wheelbase, 11" / 10"
+    wheels), parked on its centre stand.  Local frame: +X forward, +Y left, origin on the ground mid-wheelbase.
+    Engine and exhaust on the right, as on the real thing."""
+    mb = G['Vehicles.cars']
+    paint, seat, trim = M['car_paints'][0], M['scooter_seat'], M['car_trim']
+    X, Y, Z = (1, 0, 0), (0, 1, 0), (0, 0, 1)
+
+    def T(p):
+        rx, ry = rot2(p[0], p[1], yaw)
+        return Vector((x + rx, y + ry, z + p[2]))
+
+    def tube(pts, r, m, seg=8):
+        mb.tube([T(p) for p in pts], r, m, seg=seg)
+
+    def disc(c, r, h, m, axis, seg=16):
+        rot = axis if isinstance(axis, dict) else {'x': dict(ry=math.pi / 2), 'y': dict(rx=math.pi / 2)}[axis]
+        return mb.cyl(T(c), r, h, m, seg=seg, rz=yaw, **rot)
+
+    # -- wheels: tyre (squarish torus), rim, hub ---------------------------------------------------------------
+    tyres = []
+    for wx, r, w in ((0.667, 0.215, 0.11), (-0.667, 0.21, 0.12)):
+        tr = 0.06
+        secs = []
+        for i in range(24):
+            ph = i / 24 * math.tau
+            rad = Vector((math.cos(ph), 0, math.sin(ph)))
+            secs.append((Vector((wx, 0, r)) + rad * (r - tr), Y, rad, w / 2, tr))
+        tyres.append(_sweep(mb, T, secs, M['rubber'], seg=10, n=2.8, closed=True))
+        disc((wx, 0, r), r - 0.075, w - 0.02, M['rim'], 'y', seg=18)
+        disc((wx, 0, r), 0.045, w + 0.03, M['metal_dark'], 'y', seg=10)
+    # front: brake disc + caliper on the right, the single-sided link and shock on the left
+    disc((0.667, -0.06, 0.215), 0.1, 0.006, M['metal'], 'y', seg=18)
+    mb.box(T((0.6, -0.068, 0.27)), (0.07, 0.03, 0.05), trim, rz=yaw)
+    tube([(0.667, 0.07, 0.215), (0.61, 0.08, 0.44)], 0.024, M['metal_dark'])
+    tube([(0.64, 0.085, 0.24), (0.585, 0.09, 0.45)], 0.016, M['chrome'])
+
+    # -- front fender: a hood over the wheel, skirted down at the sides ---------------------------------------
+    secs = []
+    for i, deg in enumerate(range(122, 14, -12)):
+        ph = math.radians(deg)
+        rad = Vector((math.cos(ph), 0, math.sin(ph)))
+        f = math.sin(math.pi * (i + 0.5) / 10) ** 0.4
+        secs.append((Vector((0.667, 0, 0.215)) + rad * 0.278, Y, rad, 0.125 * f, 0.035 * f + 0.01, 0.075 * f))
+    fender = _sweep(mb, T, secs, paint, seg=16, n=2.4)
+    tube([(0.62, 0, 0.46), (0.5, 0, 0.56), (0.43, 0, 0.62)], 0.028, M['metal_dark'])   # fork up into the legshield
+
+    # -- legshield: curved panel wrapping back at the sides, chrome-edged, with the horn cover down the front ----
+    LS = [(0.25, 0.39, 0.19, 0.035, 0.05), (0.32, 0.395, 0.215, 0.035, 0.06), (0.46, 0.405, 0.225, 0.035, 0.065),
+          (0.6, 0.415, 0.215, 0.035, 0.06), (0.72, 0.425, 0.185, 0.035, 0.05), (0.81, 0.44, 0.14, 0.035, 0.035),
+          (0.87, 0.452, 0.095, 0.035, 0.02), (0.93, 0.462, 0.06, 0.035, 0.01)]
+    legshield = _sweep(mb, T, [((xc, 0, zz), Y, X, a, b, d) for zz, xc, a, b, d in LS], paint, seg=20, n=2.2)
+    for s in (-1, 1):
+        tube([(xc - d + 0.004, s * a, zz) for zz, xc, a, b, d in LS], 0.009, M['chrome'], seg=6)
+    _sweep(mb, T, [((0.45, 0, 0.5), Y, X, 0.02, 0.015), ((0.458, 0, 0.56), Y, X, 0.04, 0.02),
+                   ((0.47, 0, 0.74), Y, X, 0.035, 0.02), ((0.482, 0, 0.88), Y, X, 0.025, 0.018)], paint, seg=12, n=2.6)
+    for i in range(3):
+        zz = 0.6 + i * 0.035
+        tube([(0.476, -0.03, zz - 0.012), (0.484, 0, zz), (0.476, 0.03, zz - 0.012)], 0.006, M['chrome'], seg=5)
+    for s in (-1, 1):                                                          # front indicators on the legshield
+        _pod(mb, T, (0.425, s * 0.155, 0.64), (0.018, 0.026, 0.05), M['indicator'], 3.0)
+
+    # -- floorboard: painted tray, black mat with rubber strips ---------------------------------------------
+    floor = _sweep(mb, T, [((xx, 0, 0.24), Y, Z, a, 0.05) for xx, a in
+                           ((-0.44, 0.14), (-0.4, 0.17), (0.3, 0.17), (0.38, 0.17), (0.41, 0.14))], paint, seg=16, n=4.0)
+    mb.box(T((0.08, 0, 0.292)), (0.58, 0.3, 0.012), M['plastic_black'], rz=yaw)
+    for i in range(5):
+        mb.box(T((0.08, -0.12 + i * 0.06, 0.3)), (0.54, 0.03, 0.01), M['rubber'], rz=yaw)
+
+    # -- rear body: the bulbous cowl (pear-shaped section, narrower under the seat), seat, rack, tail light -----
+    CW = [(-0.965, 0.56, 0.61, 0.04), (-0.94, 0.5, 0.66, 0.12), (-0.88, 0.43, 0.7, 0.21), (-0.78, 0.37, 0.725, 0.28),
+          (-0.64, 0.325, 0.73, 0.315), (-0.5, 0.305, 0.73, 0.32), (-0.36, 0.295, 0.73, 0.29), (-0.24, 0.285, 0.725, 0.23),
+          (-0.15, 0.28, 0.71, 0.175), (-0.1, 0.29, 0.695, 0.145), (-0.07, 0.31, 0.67, 0.1), (-0.055, 0.34, 0.64, 0.05)]
+
+    def pear(p):
+        """narrower towards the seat; the front leans forward at the top (the rider's knee panel)"""
+        lean = 0.1 * max(0.0, min(1.0, (p.x + 0.34) / 0.25)) * (p.z - 0.3) / 0.4
+        return Vector((p.x + lean, p.y * (1 - 0.3 * max(0.0, (p.z - 0.33) / 0.4) ** 2), p.z))
+    cowl = _sweep(mb, T, [((xx, 0, (lo + hi) / 2), Y, Z, a, (hi - lo) / 2) for xx, lo, hi, a in CW], paint,
+                  seg=24, n=2.6, warp=pear)
+    ST = [(-0.86, 0.745, 0.07, 0.03), (-0.83, 0.755, 0.13, 0.05), (-0.72, 0.76, 0.165, 0.06), (-0.56, 0.76, 0.175, 0.062),
+          (-0.4, 0.755, 0.172, 0.06), (-0.24, 0.75, 0.16, 0.057), (-0.12, 0.745, 0.13, 0.052), (-0.04, 0.735, 0.085, 0.04),
+          (-0.015, 0.725, 0.04, 0.025)]
+    saddle = _sweep(mb, T, [((xx, 0, zc), Y, Z, a, b) for xx, zc, a, b in ST], seat, seg=20, n=3.2)
+    rack = [(-0.72, 0.15, 0.735), (-0.84, 0.14, 0.75), (-0.91, 0.085, 0.75), (-0.93, 0, 0.75)]
+    tube(rack + [(px, -py, pz) for px, py, pz in reversed(rack[:-1])], 0.011, M['chrome'])
+    for s in (-1, 1):
+        tube([(-0.72, s * 0.15, 0.735), (-0.71, s * 0.13, 0.68)], 0.01, M['chrome'], seg=6)
+    _pod(mb, T, (-0.962, 0, 0.58), (0.025, 0.065, 0.032), M['taillight'], 3.0)
+    mb.box(T((-0.945, 0, 0.47)), (0.012, 0.17, 0.12), M['white_paint'], rz=yaw, ry=-0.25)   # licence plate
+    mb.box(T((-0.94, 0, 0.53)), (0.03, 0.18, 0.02), trim, rz=yaw)
+
+    # -- under the cowl: engine / transmission case and exhaust on the right, centre stand ------------------
+    engine = _sweep(mb, T, [((xx, -0.12, zc), Y, Z, a, b) for xx, zc, a, b in
+                            ((-0.8, 0.22, 0.03, 0.05), (-0.74, 0.21, 0.05, 0.08), (-0.55, 0.22, 0.055, 0.09),
+                             (-0.36, 0.24, 0.05, 0.08), (-0.26, 0.25, 0.035, 0.05))], M['metal'], seg=12, n=2.6)
+    tube([(-0.3, -0.06, 0.16), (-0.42, -0.15, 0.15), (-0.52, -0.2, 0.22)], 0.018, M['metal_dark'])
+    muffler = _sweep(mb, T, [((xx, -0.21, zc), Y, Z, a, b) for xx, zc, a, b in
+                             ((-0.53, 0.25, 0.035, 0.04), (-0.58, 0.27, 0.055, 0.065), (-0.8, 0.31, 0.055, 0.065),
+                              (-0.84, 0.32, 0.04, 0.045))], M['metal_dark'], seg=12, n=2.4)
+    tube([(-0.83, -0.21, 0.31), (-0.89, -0.21, 0.32)], 0.014, M['chrome'], seg=8)
+    for s in (-1, 1):
+        tube([(-0.16, s * 0.1, 0.2), (-0.3, s * 0.13, 0.015)], 0.013, M['metal_dark'], seg=6)
+    tube([(-0.3, -0.15, 0.015), (-0.3, 0.15, 0.015)], 0.013, M['metal_dark'], seg=6)
+
+    # -- headset: painted handlebar cover with the round headlight, grips, levers, mirrors, speedo -----------
+    head = _sweep(mb, T, [((xx, 0, zc), Y, Z, a, b) for xx, zc, a, b in
+                          ((0.38, 1.0, 0.04, 0.03), (0.41, 1.0, 0.09, 0.055), (0.47, 1.0, 0.12, 0.07),
+                           (0.54, 0.995, 0.11, 0.075), (0.59, 0.99, 0.09, 0.075), (0.615, 0.985, 0.08, 0.07))],
+                  paint, seg=20, n=2.3)
+    _sweep(mb, T, [((0.47, yy, 1.0), X, Z, a, b) for yy, a, b in
+                   ((-0.29, 0.028, 0.024), (-0.2, 0.045, 0.034), (-0.1, 0.06, 0.045), (0, 0.065, 0.05),
+                    (0.1, 0.06, 0.045), (0.2, 0.045, 0.034), (0.29, 0.028, 0.024))], paint, seg=12, n=2.2)
+    disc((0.618, 0, 0.985), 0.078, 0.02, M['chrome'], 'x', seg=20)
+    disc((0.626, 0, 0.985), 0.066, 0.006, M['headlight'], 'x', seg=20)
+    disc((0.41, 0, 1.04), 0.05, 0.012, M['car_glass'], dict(ry=-0.7), seg=14)
+    for s in (-1, 1):
+        tube([(0.465, s * 0.28, 1.0), (0.465, s * 0.4, 1.0)], 0.019, M['plastic_black'], seg=8)
+        disc((0.465, s * 0.405, 1.0), 0.016, 0.012, M['chrome'], 'y', seg=8)
+        tube([(0.5, s * 0.27, 1.005), (0.535, s * 0.33, 1.0), (0.525, s * 0.4, 0.99)], 0.006, M['chrome'], seg=5)
+        tube([(0.47, s * 0.22, 1.03), (0.46, s * 0.28, 1.12), (0.45, s * 0.34, 1.19)], 0.008, M['chrome'], seg=6)
+        _pod(mb, T, (0.45, s * 0.37, 1.215), (0.02, 0.055, 0.04), M['chrome'], 2.2, seg=14)
+        _pod(mb, T, (0.437, s * 0.37, 1.215), (0.01, 0.048, 0.034), M['car_glass'], 2.2, seg=14)
+
+    # colliders: front (wheel, fender, legshield, headset), floor, rear (cowl, seat, wheel, engine, exhaust)
+    def pts(*parts):
+        return [v.co for rings in parts for ring in rings for v in ring]
+    hulls.collider_hull('scooter', pts(tyres[0], fender, legshield, head))
+    hulls.collider_hull('scooter', pts(floor))
+    hulls.collider_hull('scooter', pts(tyres[1], cowl, saddle, engine, muffler))
 
 
 # ------------------------------------------------------------------------------------------------

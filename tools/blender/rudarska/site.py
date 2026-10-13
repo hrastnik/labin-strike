@@ -241,7 +241,7 @@ def lot_and_cars():
         P.car(x, y, yaw, collide=False)
     for y in (-40.0, -20.0, 5.0, 30.0):
         P.car(78.6, y, math.pi / 2 if rng.random() < 0.5 else -math.pi / 2, z=Z_PLATEAU + 0.02, collide=False)
-    P.scooter(-44.6, 13.6, 0.5, z=Z_WALK)
+    P.scooter(-44.6, 13.7, 0.5, z=Z_WALK)
 
 
 # ------------------------------------------------------------------------------------------------

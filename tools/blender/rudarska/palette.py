@@ -104,6 +104,7 @@ def define():
     M['bin_gray'] = mat('bin_gray', rgb(80, 82, 84), 0.6)
     M['plastic_black'] = mat('plastic_black', rgb(20, 20, 22), 0.6)
     M['rubber'] = mat('tire_rubber', rgb(16, 16, 17), 0.88)
+    M['scooter_seat'] = mat('scooter_seat', rgb(62, 62, 64), 0.7)
     M['wood'] = mat('wood_bench', rgb(120, 82, 50), 0.7)
     M['wicker'] = mat('wicker', rgb(150, 112, 70), 0.85)
     M['parasol'] = mat('parasol_cream', rgb(228, 220, 200), 0.8, cull=False)
