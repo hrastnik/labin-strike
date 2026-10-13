@@ -3,7 +3,7 @@ import * as THREE from 'three'
 
 const UP = new THREE.Vector3(0, 1, 0)
 const tmpV = new THREE.Vector3()
-const tmpQ = new THREE.Quaternion()
+const tmpV2 = new THREE.Vector3()
 
 function radialTexture (inner, outer) {
   const c = document.createElement('canvas')
@@ -67,18 +67,15 @@ export class Effects {
     }
     this.pIdx = 0
 
-    // bullet holes
-    this.holes = []
+    // bullet holes and scorch marks: one instanced draw call, the oldest slot is reused
     const hm = new THREE.MeshBasicMaterial({ map: holeTexture(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 })
-    const hg = new THREE.PlaneGeometry(0.11, 0.11)
-    for (let i = 0; i < 140; i++) {
-      const m = new THREE.Mesh(hg, hm)
-      m.visible = false
-      m.renderOrder = 1
-      scene.add(m)
-      this.holes.push(m)
-    }
+    this.holes = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.11, 0.11), hm, 140)
+    this.holes.count = 0
+    this.holes.frustumCulled = false
+    this.holes.renderOrder = 1
+    scene.add(this.holes)
     this.holeIdx = 0
+    this.hole = new THREE.Object3D()
 
     // a single always-present light avoids shader recompiles when muzzle flashes appear
     this.muzzleLight = new THREE.PointLight(0xffc070, 0, 9, 2)
@@ -129,14 +126,21 @@ export class Effects {
       }
     }
     // decal, slightly off the surface and randomly rotated
-    const h = this.holes[this.holeIdx++ % this.holes.length]
-    h.position.set(pos.x + normal[0] * 0.004, pos.y + normal[1] * 0.004, pos.z + normal[2] * 0.004)
-    tmpQ.setFromUnitVectors(tmpV.set(0, 0, 1), new THREE.Vector3(normal[0], normal[1], normal[2]))
-    h.quaternion.copy(tmpQ)
+    this.decal(pos, normal, 0.004, 0.7 + Math.random() * 0.5)
+  }
+
+  decal (p, n, lift, size) {
+    const h = this.hole
+    h.position.set(p.x + n[0] * lift, p.y + n[1] * lift, p.z + n[2] * lift)
+    h.quaternion.setFromUnitVectors(tmpV.set(0, 0, 1), tmpV2.set(n[0], n[1], n[2]))
     h.rotateZ(Math.random() * Math.PI * 2)
-    const s = 0.7 + Math.random() * 0.5
-    h.scale.set(s, s, 1)
-    h.visible = true
+    h.scale.set(size, size, 1)
+    h.updateMatrix()
+    const holes = this.holes
+    const i = this.holeIdx++ % holes.instanceMatrix.count
+    holes.setMatrixAt(i, h.matrix)
+    holes.instanceMatrix.needsUpdate = true
+    holes.count = Math.max(holes.count, i + 1)
   }
 
   blood (pos, dir) {
@@ -168,16 +172,7 @@ export class Effects {
     this.blastLight.position.copy(pos).y += 0.6
     this.blastLight.intensity = 90
     this.blastT = 0.3
-    if (scorch) {
-      const n = scorch.normal; const p = scorch.point
-      const h = this.holes[this.holeIdx++ % this.holes.length]
-      h.position.set(p.x + n[0] * 0.01, p.y + n[1] * 0.01, p.z + n[2] * 0.01)
-      h.quaternion.setFromUnitVectors(tmpV.set(0, 0, 1), new THREE.Vector3(n[0], n[1], n[2]))
-      h.rotateZ(Math.random() * Math.PI * 2)
-      const s = 12 + Math.random() * 4
-      h.scale.set(s, s, 1)
-      h.visible = true
-    }
+    if (scorch) this.decal(scorch.point, scorch.normal, 0.01, 12 + Math.random() * 4)
   }
 
   // a bullet glancing off armour: sparks, no decal (the tank moves on)

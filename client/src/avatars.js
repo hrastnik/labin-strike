@@ -1,5 +1,6 @@
 // Remote players: procedural low-poly soldiers, snapshot interpolation and simple procedural animation.
 import * as THREE from 'three'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { PLAYER, TEAMS } from '@shared/constants.js'
 import { WEAPONS, WEAPON_LIST, KNIFE } from '@shared/weapons.js'
 import { buildGun } from './gunmodels.js'
@@ -53,6 +54,42 @@ function box (w, h, d, color, x, y, z, parent) {
   m.castShadow = true
   parent.add(m)
   return m
+}
+
+// the shapes hung on one pivot move together: build() merges them into one vertex-coloured mesh per pivot,
+// so a soldier costs ~10 draw calls (and as many shadow ones) instead of ~25
+const partMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true })
+const _col = new THREE.Color()
+
+function mergeParts (pivot) {
+  const parts = pivot.children.filter((o) => o.isMesh)
+  const geos = parts.map((m) => {
+    m.updateMatrix()
+    let g = m.geometry.clone().applyMatrix4(m.matrix)
+    g.deleteAttribute('uv')
+    if (m.userData.twoSided) g = mergeGeometries([g, flipped(g)])
+    const n = g.attributes.position.count
+    const c = new Float32Array(n * 3)
+    _col.copy(m.material.color)
+    for (let i = 0; i < n; i++) _col.toArray(c, i * 3)
+    g.setAttribute('color', new THREE.BufferAttribute(c, 3))
+    m.geometry.dispose()
+    pivot.remove(m)
+    return g
+  })
+  const merged = new THREE.Mesh(mergeGeometries(geos), partMat)
+  merged.castShadow = true
+  pivot.add(merged)
+}
+
+// back faces of an open shape (helmet skirt), as its own triangles
+function flipped (g) {
+  const b = g.clone()
+  const idx = b.index.array
+  for (let i = 0; i < idx.length; i += 3) { const t = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = t }
+  const nrm = b.attributes.normal.array
+  for (let i = 0; i < nrm.length; i++) nrm[i] = -nrm[i]
+  return b
 }
 
 function pivot (x, y, z, parent) {
@@ -174,7 +211,7 @@ export class Avatar {
       dome.scale.set(1, 0.9, 1.08)
       const skirt = new THREE.Mesh(new THREE.CylinderGeometry(0.155, 0.185, 0.09, 10, 1, true), mat(st.helmet))
       skirt.position.set(0, 0.18, 0.01)
-      skirt.material.side = THREE.DoubleSide
+      skirt.userData.twoSided = true
       dome.castShadow = skirt.castShadow = true
       this.head.add(dome, skirt)
     } else {
@@ -205,6 +242,9 @@ export class Avatar {
     box(0.08, 0.08, 0.09, SKIN, 0.17, -0.12, -0.5, shoulderL)
     // where each hand sits relative to its shoulder, for reach()
     this.shoulders = [{ pivot: shoulderR, hand: new THREE.Vector3(-0.1, -0.22, -0.36) }, { pivot: shoulderL, hand: new THREE.Vector3(0.17, -0.12, -0.5) }]
+    const pivots = []
+    root.traverse((o) => { if (o.children.some((c) => c.isMesh)) pivots.push(o) })
+    for (const p of pivots) mergeParts(p)
 
     // long arms are shouldered at the rifle pivot, sidearms held out in front
     this.rifle = pivot(0.06, -0.14, -0.3, this.aim)
