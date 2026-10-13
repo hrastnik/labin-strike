@@ -295,6 +295,20 @@ export class Avatar {
     return true
   }
 
+  // astride a motorcycle: knees up on the footrests, leaning into the bars, no weapon in hand
+  sit () {
+    this.hips.position.set(0, 0.86, 0.08)
+    this.torso.position.copy(this.hips.position)
+    for (const [i, L] of this.legs.entries()) {
+      L.thigh.rotation.set(1.3, 0, (i ? -1 : 1) * 0.16)
+      L.knee.rotation.x = -1.5
+      L.ankle.rotation.x = 0.25
+    }
+    this.torso.rotation.set(-0.4, 0, 0)
+    this.aim.rotation.x = 0.05
+    this.rifle.visible = this.pistol.visible = false
+  }
+
   showFlash () { this.flashT = 0.06 }
   stab () { this.stabT = STAB_TIME }
 
@@ -359,12 +373,13 @@ export class Avatar {
     } else {
       this.body.rotation.set(0, 0, 0)
       this.body.position.y = 0
-      root.visible = !this.inTank
+      root.visible = !this.inTank && !this.onBike // a bike draws its own rider
       if (this.tag) this.tag.visible = true
     }
   }
 
   get inTank () { return !!(this.flags & 64) }
+  get onBike () { return !!(this.flags & 128) }
 
   // alive and out in the open: what a bullet or a blade can reach
   get exposed () { return this.alive && !this.inTank }

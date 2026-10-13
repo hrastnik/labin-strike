@@ -1,5 +1,6 @@
 // Drives the real authoritative Game through fake channels: loadout validation, faction restrictions,
-// ammunition, team switching, bot loadouts, grenades, sprint movement, ammo drops, the knife, the cats and the tanks.
+// ammunition, team switching, bot loadouts, grenades, sprint movement, ammo drops, the knife, the cats, the tanks and
+// the motorcycles.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import path from 'node:path'
@@ -10,6 +11,7 @@ import { WEAPONS, WEAPON_LIST, GRENADE, KNIFE, AMMO_DROP, CLASS_IDS, isValidLoad
 import { NADE_DT, createGrenade, stepGrenade } from '../shared/grenade.js'
 import { lineOfSight, rayMap } from '../shared/physics.js'
 import { TANK, tankPoint, gunRay, armourFor, underHull } from '../shared/tanks.js'
+import { BIKE, bikePoint, bikeDistance, toughnessFor } from '../shared/bikes.js'
 import { CAT, CAT_STATE, CAT_COATS } from '../server/cats.js'
 import { rayVsPlayer, leanShift } from '../shared/hitbox.js'
 import { SD, SD_SITES, otherTeam } from '../shared/modes.js'
@@ -1026,5 +1028,188 @@ test('tanks: in S&D every round starts with both tanks back home and empty', () 
   assert.equal(t.driver, 0)
   assert.equal(a.tank, null)
   assert.ok(a.alive)
+  endTanks(ax, al)
+})
+
+// ------------------------------------------------------------------ Motorcycles
+
+// two humans and no bots
+function bikeMatch () {
+  game.botsEnabled = false
+  game.balanceBots()
+  const ax = connect('Yankee', { team: 'axis' })
+  const al = connect('Zulu', { team: 'allies' })
+  const a = deploy(ax, AXIS_KIT)
+  const b = deploy(al, ALLIES_KIT)
+  for (const p of [a, b]) p.protectUntil = 0
+  return { ax, al, a, b, bike: (team) => game.bikes.list.find((k) => k.team === team) }
+}
+
+// standing on the ground just off the bike's left side
+const besideBike = (k) => bikePoint(k, -(BIKE.half[0] + 0.5), 0, 0)
+
+function getOn (ch, k) {
+  ch.player.pos = besideBike(k)
+  ch.send('bike', { on: true })
+  assert.equal(ch.player.bike, k)
+}
+
+test("bikes: one per side always stands at its base, clear of the spawns and the tank's spot", () => {
+  const { ax, al } = bikeMatch()
+  assert.deepEqual(game.bikes.list.map((k) => k.team).sort(), ['allies', 'axis'])
+  for (const k of game.bikes.list) {
+    assert.equal(k.hp, BIKE.maxHealth)
+    const spawns = game.map.spawns[k.team]
+    for (const s of spawns) assert.ok(bikeDistance([s[0], s[1] + 1, s[2]], k) > 1, 'no spawn point at the bike')
+    const near = Math.min(...spawns.map((s) => Math.hypot(s[0] - k.pos[0], s[2] - k.pos[2])))
+    assert.ok(near < 25, `close to its side's spawns (${near})`)
+    const tank = game.tanks.parking[k.team].pos
+    assert.ok(Math.hypot(tank[0] - k.pos[0], tank[2] - k.pos[2]) > TANK.half[1] + BIKE.half[2], "off the tank's spot")
+  }
+  game.broadcastSnapshot()
+  assert.equal(al.last('snap').b.length, 2)
+  endTanks(ax, al)
+})
+
+test("bikes: a soldier gets on their own side's bike only, rides it unarmed and in the open, and gets off beside it", () => {
+  const { ax, al, a, b, bike } = bikeMatch()
+  const mine = bike('axis')
+  a.pos = besideBike(bike('allies'))
+  ax.send('bike', { on: true })
+  assert.equal(a.bike, null, "not the enemy's")
+  a.pos = bikePoint(mine, -(BIKE.half[0] + 3), 0, 0)
+  ax.send('bike', { on: true })
+  assert.equal(a.bike, null, 'out of reach')
+  getOn(ax, mine)
+  assert.equal(mine.driver, a.id)
+  assert.equal(ax.last('ride').id, mine.id)
+  const mate = connect('Alfa', { team: 'axis' })
+  const c = deploy(mate, AXIS_KIT)
+  c.pos = besideBike(mine)
+  mate.send('bike', { on: true })
+  assert.equal(c.bike, null, 'taken')
+  game.broadcastSnapshot()
+  assert.ok(al.last('snap').p.find((e) => e[0] === a.id)[6] & 128, 'snapshots say who is riding')
+  assert.equal(fire(ax, 'mp40'), false, 'both hands on the bars')
+
+  b.pos = bikePoint(mine, 0, 0, -6)
+  fire(al, 'thompson', { e: [a.pos[0], a.pos[1] + 1.6, a.pos[2]], hit: { id: a.id, zone: 'body' } })
+  assert.ok(a.hp < PLAYER.maxHealth, 'the rider can be shot')
+
+  ax.send('bike', { on: false })
+  assert.equal(a.bike, null)
+  assert.equal(mine.driver, 0)
+  const out = ax.last('ride')
+  assert.equal(out.id, 0)
+  assert.deepEqual(a.pos, out.pos)
+  assert.ok(bikeDistance([out.pos[0], out.pos[1] + 1, out.pos[2]], mine) > PLAYER.radius, 'off beside the bike, not in it')
+  mate.send('bike', { on: true })
+  assert.equal(c.bike, mine, 'free again')
+  mate.disconnect()
+  assert.equal(mine.driver, 0, 'a rider who leaves frees it')
+  endTanks(ax, al)
+})
+
+test("bikes: the rider moves it at its own pace with their hitbox leaning along, and a jump is pulled back", () => {
+  const { ax, al, a, bike } = bikeMatch()
+  const k = bike('axis')
+  getOn(ax, k)
+  const start = k.pos.slice()
+  clock += 1000
+  ax.send('bk', [a.life, start[0] + 12, start[1], start[2], k.yaw + 0.3, -0.6, clock])
+  assert.deepEqual(k.pos, [start[0] + 12, start[1], start[2]])
+  assert.deepEqual(a.pos, k.pos, 'the rider rides along')
+  assert.equal(a.yaw, k.yaw)
+  assert.equal(a.lean, -0.6)
+  assert.deepEqual([k.body.pos.x, k.body.pos.z], [k.pos[0], k.pos[2]], 'the collider follows')
+  clock += 100
+  ax.send('bk', [a.life, k.pos[0], k.pos[1], k.pos[2], k.yaw, 5, clock])
+  assert.equal(a.lean, 1)
+  clock += 100
+  ax.send('bk', [a.life, k.pos[0] + 20, k.pos[1], k.pos[2], k.yaw, 0, clock])
+  assert.equal(k.pos[0], start[0] + 12)
+  assert.deepEqual(ax.last('tp').pos, k.pos)
+  endTanks(ax, al)
+})
+
+test('bikes: bullets and grenades wear one down, the rider goes with it, and a new one stands at the base a minute later', () => {
+  const { ax, al, a, b, bike } = bikeMatch()
+  const k = bike('allies')
+  const home = k.pos.slice()
+  getOn(al, k)
+  clock += 1000
+  al.send('bk', [b.life, home[0] + 5, home[1], home[2], k.yaw, 0, clock])
+  a.pos = bikePoint(k, -(BIKE.half[0] + 4), 0, 0)
+  const side = bikePoint(k, -BIKE.half[0], 0.5, 0)
+  const o = [a.pos[0], a.pos[1] + PLAYER.eye, a.pos[2]]
+  const dist = Math.hypot(side[0] - o[0], side[1] - o[1], side[2] - o[2])
+  assert.equal(fire(ax, 'mp40', { e: side, hit: { bike: k.id } }), true)
+  assert.equal(k.hp, BIKE.maxHealth - damageFor('mp40', dist, 'body') * toughnessFor('mp40'))
+  assert.equal(ax.last('hit').bike, k.id)
+  fire(al, 'thompson', { e: side, hit: { bike: bike('axis').id } })
+  assert.equal(bike('axis').hp, BIKE.maxHealth, 'nowhere near it')
+
+  const hp = k.hp
+  a.pos = [a.pos[0], a.pos[1] + 40, a.pos[2]]
+  game.explode({ pos: bikePoint(k, -(BIKE.half[0] + 4), 0.05, 0), owner: a.id, team: a.team, k: 0 })
+  assert.ok(hp - k.hp > 10 && !k.destroyed, `a grenade a few metres off (${hp - k.hp})`)
+  assert.ok(b.alive)
+  game.explode({ pos: bikePoint(k, 0, 0.05, -BIKE.half[2] - 0.3), owner: a.id, team: a.team, k: 1 })
+  assert.equal(k.destroyed, true, 'one at the wheel')
+  assert.equal(al.last('bikeboom').id, k.id)
+  assert.equal(b.alive, false, 'the rider goes with it')
+  assert.equal(b.bike, null)
+  assert.match(al.last('notice').m, /Harley-Davidson WLA was destroyed/)
+
+  advance((MATCH.respawnDelay + 0.5) * 1000)
+  b.pos = besideBike(k)
+  al.send('bike', { on: true })
+  assert.equal(b.bike, null, 'nobody rides a wreck')
+  advance((BIKE.respawn - MATCH.respawnDelay - 2) * 1000)
+  assert.equal(k.destroyed, true, 'not yet')
+  advance(2000)
+  assert.equal(k.destroyed, false)
+  assert.equal(k.hp, BIKE.maxHealth)
+  assert.deepEqual(k.pos, home)
+  assert.match(al.last('notice').m, /new Harley-Davidson WLA stands at the Allies base/)
+  game.broadcastSnapshot()
+  assert.equal(al.last('snap').b.find((e) => e[0] === k.id)[8], 0)
+  endTanks(ax, al)
+})
+
+test('bikes: an enemy tank rolling over one flattens it', () => {
+  const { ax, al, a, tank } = tankMatch()
+  const t = tank('axis')
+  climbIn(ax, t)
+  const k = game.bikes.list.find((x) => x.team === 'allies')
+  k.pos = tankPoint(t, 0, 0, -(TANK.half[1] + 1))
+  clock += 300
+  const p = tankPoint(t, 0, 0, -2)
+  ax.send('tk', [a.life, p[0], p[1], p[2], t.yaw, t.turret, 0, clock])
+  assert.equal(k.destroyed, true)
+  assert.equal(game.bikes.list.find((x) => x.team === 'axis').destroyed, false)
+  endTanks(ax, al)
+})
+
+test('bikes: in S&D every round starts with both bikes whole, home and empty', () => {
+  const { ax, al, a, bike } = bikeMatch()
+  game.mode = 'sd'
+  game.restartMatch()
+  const k = bike('axis')
+  const home = k.pos.slice()
+  getOn(ax, k)
+  clock += 1000
+  ax.send('bk', [a.life, home[0] + 3, home[1], home[2], k.yaw, 0, clock])
+  ax.send('use', { on: true })
+  assert.equal(game.sd.actionFor(a), null, 'no planting from the saddle')
+  game.bikes.destroy(bike('allies'), a, 'mp40')
+  game.sd.endRound('axis', 'time')
+  advance(SD.roundOver * 1000 + 100)
+  assert.equal(game.sd.round, 2)
+  assert.deepEqual(k.pos, home)
+  assert.equal(k.driver, 0)
+  assert.equal(a.bike, null)
+  assert.ok(a.alive)
+  assert.equal(bike('allies').destroyed, false)
   endTanks(ax, al)
 })

@@ -1,5 +1,5 @@
 // Procedural WebAudio (the headshot cue is the one recorded clip): gunshots (local + spatialised remote), reload/dry clicks, knife, pickups, footsteps, hit/kill/headshot cues, cats,
-// tank guns and the engine of the tank we drive.
+// tank guns and the engines of the tank or motorcycle we drive.
 // Each weapon's report is shaped by its fx.sound profile in shared/weapons.js.
 import { WEAPONS } from '@shared/weapons.js'
 
@@ -446,6 +446,30 @@ export class Audio {
     this.motor.g.gain.setTargetAtTime(level > 0 ? 0.25 + level * 0.35 : 0, t, 0.15)
     this.motor.lp.frequency.setTargetAtTime(110 + level * 260, t, 0.2)
     this.motor.src.playbackRate.setTargetAtTime(0.7 + level * 0.6, t, 0.2)
+  }
+
+  // the engine of the motorcycle we ride: a twin's putter that climbs with the revs; level 0 is off, 1 flat out
+  bikeEngine (level) {
+    if (!this.ctx || !this.enabled) return
+    const ctx = this.ctx
+    if (!this.bikeMotor) {
+      if (level <= 0) return
+      const o = ctx.createOscillator()
+      o.type = 'sawtooth'
+      const lp = ctx.createBiquadFilter()
+      lp.type = 'lowpass'
+      lp.Q.value = 3
+      const g = ctx.createGain()
+      g.gain.value = 0
+      o.connect(lp); lp.connect(g); g.connect(this.master)
+      o.start()
+      this.bikeMotor = { o, lp, g }
+    }
+    const t = ctx.currentTime
+    const m = this.bikeMotor
+    m.g.gain.setTargetAtTime(level > 0 ? 0.1 + level * 0.14 : 0, t, 0.1)
+    m.o.frequency.setTargetAtTime(26 + level * 64, t, 0.15)
+    m.lp.frequency.setTargetAtTime(240 + level * 900, t, 0.15)
   }
 
   footstep (pos = null, vol = 0.12) {

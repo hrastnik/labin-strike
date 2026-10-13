@@ -1,7 +1,7 @@
 // Static / dynamic split of the sun's shadow map.
 // The map and the parked cars never move, yet drawing them into the 4096² shadow map every frame cost as much
 // as the main pass (~2M triangles).  Their depth is rendered once into a cache.  Every frame only the casters that
-// can move (players, cats, tanks, grenades, drops, the bomb) are drawn, on top of the previous frame's map with the
+// can move (players, cats, tanks, bikes, grenades, drops, the bomb) are drawn, on top of the previous frame's map with the
 // tiles they covered last frame copied back from the cache (copying the whole 4096² map costs ~1 ms by itself).
 // Same shadow map, same filtering, so the result is identical.
 import * as THREE from 'three'

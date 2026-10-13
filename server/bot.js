@@ -7,6 +7,7 @@ import { SD, SD_SITES } from '../shared/modes.js'
 import { knifeReach, leanShift, leanFactor } from '../shared/hitbox.js'
 import { CharacterMotor, lineOfSight } from '../shared/physics.js'
 import { TANK } from '../shared/tanks.js'
+import { BIKE } from '../shared/bikes.js'
 
 const TAU = Math.PI * 2
 const wrap = (a) => { a = (a + Math.PI) % TAU; return (a < 0 ? a + TAU : a) - Math.PI }
@@ -276,11 +277,17 @@ export class Bot {
       const d = Math.hypot(dx, dz)
       if (d < 1.1 && d > 0.001) { wishX += (dx / d) * 2.5 * (1.1 - d); wishZ += (dz / d) * 2.5 * (1.1 - d) }
     }
-    // and steer round the tanks, which the nav grid knows nothing about
+    // and steer round the tanks and bikes, which the nav grid knows nothing about
     for (const t of this.g.tanks.list) {
       const dx = p.pos[0] - t.pos[0]; const dz = p.pos[2] - t.pos[2]
       const d = Math.hypot(dx, dz)
       const r = TANK.half[1] + 1.2
+      if (d < r && d > 0.001) { wishX += (dx / d) * 3 * (r - d); wishZ += (dz / d) * 3 * (r - d) }
+    }
+    for (const b of this.g.bikes.list) {
+      const dx = p.pos[0] - b.pos[0]; const dz = p.pos[2] - b.pos[2]
+      const d = Math.hypot(dx, dz)
+      const r = BIKE.half[2] + 0.8
       if (d < r && d > 0.001) { wishX += (dx / d) * 3 * (r - d); wishZ += (dz / d) * 3 * (r - d) }
     }
 

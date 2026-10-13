@@ -223,6 +223,7 @@ export class Tanks {
       if (!q.alive || q.tank || q.team === t.team) continue
       if (underHull(t, q.pos[0], q.pos[1], q.pos[2], 0.15)) this.g.applyDamage(q, driver, 1000, TANK.crushId, 'body', t.pos)
     }
+    this.g.bikes.crush(t, driver)
   }
 
   // { t: turret yaw, g: gun pitch } as the driver saw them when firing
@@ -246,6 +247,8 @@ export class Tanks {
       const h = rayVsTank(o, d, maxT, u)
       if (h != null) { maxT = h; direct = u }
     }
+    const bike = g.bikes.ray(o, d, maxT)
+    if (bike) { maxT = bike.t; direct = null }
     for (const q of g.players.values()) {
       if (!q.alive || q.tank) continue
       const h = rayVsPlayer(o, d, maxT, q.pos[0], q.pos[1], q.pos[2], q.crouch, leanShift(q.yaw, q.lean))

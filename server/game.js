@@ -17,7 +17,9 @@ import { Bot } from './bot.js'
 import { Cats, CAT } from './cats.js'
 import { SearchAndDestroy } from './sd.js'
 import { Tanks } from './tanks.js'
+import { Bikes } from './bikes.js'
 import { armourFor } from '../shared/tanks.js'
+import { toughnessFor } from '../shared/bikes.js'
 
 const TEAM_IDS = ['allies', 'axis']
 const r2 = (v) => Math.round(v * 100) / 100
@@ -59,6 +61,7 @@ export class Game {
       `(${this.nav.walkableCount} walkable) baked in ${Date.now() - t0}ms`)
     this.cats = new Cats(this)
     this.tanks = new Tanks(this) // after the nav grid: parked tanks must not carve it
+    this.bikes = new Bikes(this)
 
     this.match = { state: 'playing', scores: { allies: 0, axis: 0 }, endsAt: this.now() + MATCH.timeLimit * 1000, restartAt: 0, winner: null }
     this.io.onConnection((ch) => this.onConnection(ch))
@@ -99,6 +102,8 @@ export class Game {
     channel.on('tank', (data) => { const p = channel.player; if (p) data?.on ? this.tanks.enter(p) : this.tanks.exit(p) })
     channel.on('tk', (data) => { const p = channel.player; if (p) this.tanks.state(p, data) })
     channel.on('shell', (data) => { const p = channel.player; if (p) this.tanks.fire(p, data) })
+    channel.on('bike', (data) => { const p = channel.player; if (p) data?.on ? this.bikes.enter(p) : this.bikes.exit(p) })
+    channel.on('bk', (data) => { const p = channel.player; if (p) this.bikes.state(p, data) })
     channel.on('pong', (data) => { const p = channel.player; if (p && data && typeof data.t === 'number') p.ping = Math.max(0, this.now() - data.t) })
     channel.on('chat', (data) => {
       const p = channel.player
@@ -141,6 +146,7 @@ export class Game {
     console.log(`[game] ${p.name} left`)
     this.players.delete(p.id)
     if (p.tank) this.tanks.eject(p.tank)
+    if (p.bike) this.bikes.eject(p.bike)
     channel.player = null
     this.balanceBots()
     this.broadcastRoster()
@@ -205,7 +211,8 @@ export class Game {
       lastKnife: -1e9,
       lastStateAt: 0,
       firedAt: -1e9,
-      tank: null // the tank this soldier is driving
+      tank: null, // the tank this soldier is driving
+      bike: null // the motorcycle this soldier is riding
     }
     this.players.set(p.id, p)
     if (isBot) p.bot = new Bot(this, p)
@@ -266,6 +273,7 @@ export class Game {
     p.hp = PLAYER.maxHealth
     p.alive = true
     p.tank = null
+    p.bike = null
     p.crouch = false
     p.lean = 0
     p.life++
@@ -338,6 +346,7 @@ export class Game {
     if (!this.teamAllowed(team, p)) return deny('Teams would be unbalanced')
     p.lastTeamSwitch = now
     if (p.tank) this.tanks.eject(p.tank)
+    if (p.bike) this.bikes.eject(p.bike)
     // leaving the field is not a death: no score change, back to the loadout screen
     p.alive = false
     p.cookAt = 0
@@ -396,7 +405,7 @@ export class Game {
   // ------------------------------------------------------------------ client messages
 
   handleState (p, s) {
-    if (!Array.isArray(s) || s.length < 8 || !p.alive || p.tank || s[0] !== p.life) return
+    if (!Array.isArray(s) || s.length < 8 || !p.alive || p.tank || p.bike || s[0] !== p.life) return
     const [, x, y, z, yaw, pitch, flags, weapon, , lean] = s
     if (![x, y, z, yaw, pitch].every(Number.isFinite)) return
     const now = this.now()
@@ -433,7 +442,7 @@ export class Game {
   }
 
   handleFire (p, msg) {
-    if (!p.alive || p.tank || !msg) return
+    if (!p.alive || p.tank || p.bike || !msg) return
     // only the weapons the server issued for this life, of the player's own faction, with rounds left
     const id = msg.w
     if (!canUse(p.team, id) || (id !== p.loadout.primary && id !== p.loadout.secondary)) return
@@ -458,9 +467,11 @@ export class Game {
     if (Math.hypot(o[0] - p.pos[0], o[1] - eyeY, o[2] - p.pos[2]) > 3) return
     const dist = Math.hypot(e[0] - o[0], e[1] - o[1], e[2] - o[2])
     if (dist > w.range) return
-    if (hit.tank) {
+    if (hit.tank || hit.bike) {
       const block = dist > 0.5 && rayMap(this.RAPIER, this.world, o, [(e[0] - o[0]) / dist, (e[1] - o[1]) / dist, (e[2] - o[2]) / dist], dist)
-      if (!block || block.dist >= dist - 0.4) this.tanks.bullet(p, id, hit.tank, o, e, dist)
+      if (block && block.dist < dist - 0.4) return
+      if (hit.tank) this.tanks.bullet(p, id, hit.tank, o, e, dist)
+      else this.bikes.bullet(p, id, hit.bike, o, e, dist)
       return
     }
     const target = this.players.get(hit.id)
@@ -476,14 +487,14 @@ export class Game {
 
   // { k: the client's throw number }: the fuse is timed here, so a client cannot claim a longer or shorter cook
   handleCook (p, msg) {
-    if (!p.alive || p.tank || !(p.grenades > 0) || p.cookAt) return
+    if (!p.alive || p.tank || p.bike || !(p.grenades > 0) || p.cookAt) return
     p.cookAt = this.now()
     p.cookK = nadeKey(msg?.k)
   }
 
   // { o: eye position, d: view direction, k: the client's throw number (pairs its own visual with the blast) }
   handleNade (p, msg) {
-    if (!p.alive || p.tank || !(p.grenades > 0) || !msg) return
+    if (!p.alive || p.tank || p.bike || !(p.grenades > 0) || !msg) return
     const o = msg.o; const d = msg.d
     if (!validVec(o) || !validVec(d)) return
     const eyeY = p.pos[1] + (p.crouch ? PLAYER.crouchEye : PLAYER.eye)
@@ -495,7 +506,7 @@ export class Game {
 
   // { o: eye position, d: view direction, hit: id of the enemy the client saw within reach, if any }
   handleKnife (p, msg) {
-    if (!p.alive || p.tank || !msg) return
+    if (!p.alive || p.tank || p.bike || !msg) return
     if (this.now() - p.lastKnife < (KNIFE.windup + KNIFE.recover) * 1000 * 0.7) return
     const o = msg.o; const d = msg.d
     if (!validVec(o) || !validVec(d)) return
@@ -559,7 +570,7 @@ export class Game {
     this.blast([g.pos[0], g.pos[1] + 0.2, g.pos[2]], thrower, g.team, blastDamage, GRENADE.id, g.pos)
   }
 
-  // a blast at c set off by attacker for team: hurts the attacker and everyone not on that team, soldiers and tanks;
+  // a blast at c set off by attacker for team: hurts the attacker and everyone not on that team, soldiers and vehicles;
   // from: where the damage indicator points; direct: a tank the shell struck
   blast (c, attacker, team, damageAt, weapon, from = c, direct = null) {
     for (const q of this.players.values()) {
@@ -576,6 +587,7 @@ export class Game {
       if (dmg > 0) this.applyDamage(q, attacker, dmg, weapon, 'body', from)
     }
     this.tanks.blast(c, attacker, team, damageAt, weapon, direct)
+    this.bikes.blast(c, attacker, team, damageAt, weapon)
   }
 
   // Fires a bot weapon along dir from origin; resolves hits server-side.
@@ -586,6 +598,8 @@ export class Game {
     let victim = null; let zone = null
     const armour = this.tanks.ray(o, d, maxT)
     if (armour) maxT = armour.t
+    const bike = this.bikes.ray(o, d, maxT)
+    if (bike) maxT = bike.t
     for (const q of this.players.values()) {
       if (q === p || !q.alive || q.tank || q.team === p.team) continue
       const h = rayVsPlayer(o, d, maxT, q.pos[0], q.pos[1], q.pos[2], q.crouch, leanShift(q.yaw, q.lean))
@@ -598,6 +612,7 @@ export class Game {
     for (const q of this.players.values()) if (q.isBot && q.team !== p.team && q !== p) q.bot.hear(p)
     if (this.match.state !== 'playing') return
     if (victim) this.applyDamage(victim, p, damageFor(weapon, maxT, zone), weapon, zone)
+    else if (bike) { if (bike.bike.team !== p.team) this.bikes.damage(bike.bike, p, damageFor(weapon, maxT, 'body') * toughnessFor(weapon), weapon, o) }
     else if (armour && armour.tank.team !== p.team) this.tanks.damage(armour.tank, p, damageFor(weapon, maxT, 'body') * armourFor(weapon), weapon, o)
   }
 
@@ -621,6 +636,7 @@ export class Game {
   kill (victim, attacker, weapon, headshot) {
     victim.alive = false
     if (victim.tank) this.tanks.eject(victim.tank)
+    if (victim.bike) this.bikes.eject(victim.bike)
     victim.hp = 0
     victim.deaths++
     victim.respawnAt = this.now() + MATCH.respawnDelay * 1000
@@ -684,6 +700,7 @@ export class Game {
     this.match = { state: 'playing', scores: { allies: 0, axis: 0 }, endsAt: this.now() + MATCH.timeLimit * 1000, restartAt: 0, winner: null }
     for (const p of this.players.values()) { p.kills = 0; p.deaths = 0 }
     this.tanks.newMatch()
+    this.bikes.reset()
     this.emitAll('notice', { m: `New match: ${MODES[this.mode].name}` }, true)
     if (this.mode === 'sd') {
       this.sd = new SearchAndDestroy(this)
@@ -718,6 +735,7 @@ export class Game {
     }
     this.updateGrenades(dt, now)
     this.updateDrops(now)
+    this.bikes.tick(now)
     // with nobody connected the bots (and cats) idle instead of burning CPU
     const anyHumans = this.humans().length > 0
     if (anyHumans) this.cats.update(dt, now)
@@ -750,12 +768,12 @@ export class Game {
     const list = []
     for (const p of this.players.values()) {
       const flags = (p.alive ? 1 : 0) | (p.crouch ? 2 : 0) | (p.ads ? 4 : 0) | (p.reloading ? 8 : 0) |
-        (now - p.firedAt < 400 ? 16 : 0) | (now < p.protectUntil ? 32 : 0) | (p.tank ? 64 : 0)
+        (now - p.firedAt < 400 ? 16 : 0) | (now < p.protectUntil ? 32 : 0) | (p.tank ? 64 : 0) | (p.bike ? 128 : 0)
       const age = Math.max(0, Math.min(1000, Math.round(now - p.posAt)))
       const weapon = WEAPON_CODE[p.slot === 1 ? p.loadout.secondary : p.loadout.primary]
       list.push([p.id, r2(p.pos[0]), r2(p.pos[1]), r2(p.pos[2]), r3(p.yaw), r3(p.pitch), flags, weapon, Math.round(p.hp), p.life, age, r2(p.lean)])
     }
-    this.emitAll('snap', { t: now, p: list, c: this.cats.snapshot(), k: this.tanks.snapshot(now) })
+    this.emitAll('snap', { t: now, p: list, c: this.cats.snapshot(), k: this.tanks.snapshot(now), b: this.bikes.snapshot(now) })
   }
 
   roster () {
