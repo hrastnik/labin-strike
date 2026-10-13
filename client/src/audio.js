@@ -1,4 +1,4 @@
-// Procedural WebAudio: gunshots (local + spatialised remote), reload/dry clicks, knife, pickups, footsteps, hit/kill cues, cats,
+// Procedural WebAudio (the headshot cue is the one recorded clip): gunshots (local + spatialised remote), reload/dry clicks, knife, pickups, footsteps, hit/kill/headshot cues, cats,
 // tank guns and the engine of the tank we drive.
 // Each weapon's report is shaped by its fx.sound profile in shared/weapons.js.
 import { WEAPONS } from '@shared/weapons.js'
@@ -27,6 +27,11 @@ export class Audio {
     comp.connect(this.ctx.destination)
     this.noise = this.makeNoise(1.5)
     this.brown = this.makeBrown(1.5)
+    fetch('/assets/sounds/headshot.wav')
+      .then((r) => r.arrayBuffer())
+      .then((b) => this.ctx.decodeAudioData(b))
+      .then((clip) => { this.headshotClip = clip })
+      .catch(() => {})
   }
 
   makeNoise (sec) {
@@ -472,6 +477,18 @@ export class Audio {
     g.gain.exponentialRampToValueAtTime(0.0001, t + (kill ? 0.16 : 0.05))
     o.connect(g); g.connect(this.master)
     o.start(t); o.stop(t + 0.2)
+  }
+
+  // a round ringing off the helmet and into the head: a recorded clip, not synthesised
+  headshot () {
+    if (!this.ctx || !this.headshotClip) return
+    const src = this.ctx.createBufferSource()
+    src.buffer = this.headshotClip
+    src.playbackRate.value = 0.96 + Math.random() * 0.08
+    const g = this.ctx.createGain()
+    g.gain.value = 0.3
+    src.connect(g); g.connect(this.master)
+    src.start()
   }
 
   hurt () {

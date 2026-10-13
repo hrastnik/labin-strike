@@ -153,6 +153,8 @@ The car models are built with `tools/blender/cars/` and exported to `client/publ
 
 The tanks are Quaternius's low-poly tanks from [Poly Pizza](https://poly.pizza/u/Quaternius), released under CC0 and used unchanged as `client/public/assets/tanks/sherman.glb` and `panzer.glb`. `shared/tanks.js` holds their measured hull and turret sizes at the 0.36 scale the client draws them at.
 
+The headshot sound, `client/public/assets/sounds/headshot.wav`, layers BMacZero's `bing1.wav` from [Metal Impact Sounds](https://opengameart.org/content/metal-impact-sounds) over qubodup's `qubodupImpactMeat02` from [Impact](https://opengameart.org/content/impact), both CC0 on OpenGameArt.
+
 `node tools/test/run_straight.mjs` is a movement check. It runs the character motor across the map in straight lines and reports places where you would snag on open ground.
 
 ## License

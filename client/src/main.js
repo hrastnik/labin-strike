@@ -633,6 +633,7 @@ net.on('kill', (d) => {
     G.act = null
   } else if (d.k === G.myId && victim) {
     hud.center(`<small>You killed ${escapeHtml(victim.name)}${d.hs ? ' · headshot' : ''}</small>`, 1.6)
+    if (d.hs) audio.headshot()
   }
   const a = avatars.map.get(d.v)
   if (a) a.killedLife = a.life // drop immediately instead of waiting for the interpolation delay
