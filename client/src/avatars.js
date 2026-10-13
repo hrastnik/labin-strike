@@ -21,6 +21,11 @@ const STAB_TIME = KNIFE.windup + KNIFE.recover
 const LEAN_TILT = Math.asin(PLAYER.leanDist / 0.76) // 0.76 m from the torso pivot to the head: lands the head where its hitbox shifts
 // crouch leg angles: [planted left, kneeling right]
 const KNEEL = [{ thigh: 1.6, knee: -1.85, ankle: 0.25 }, { thigh: 0.6, knee: -2.46, ankle: 0 }]
+const THIGH = 0.45 // hip to knee, knee to ankle
+const SHIN = 0.38
+const ARM_REACH = 0.46 // shoulder to a hand on the bars
+const _v = new THREE.Vector3()
+const _u = new THREE.Vector3()
 
 // one template per weapon; soldiers clone it (geometry and materials shared)
 const gunTemplates = new Map()
@@ -198,6 +203,8 @@ export class Avatar {
     foreL.rotation.x = 1.5
     foreL.rotation.z = -0.5
     box(0.08, 0.08, 0.09, SKIN, 0.17, -0.12, -0.5, shoulderL)
+    // where each hand sits relative to its shoulder, for reach()
+    this.shoulders = [{ pivot: shoulderR, hand: new THREE.Vector3(-0.1, -0.22, -0.36) }, { pivot: shoulderL, hand: new THREE.Vector3(0.17, -0.12, -0.5) }]
 
     // long arms are shouldered at the rifle pivot, sidearms held out in front
     this.rifle = pivot(0.06, -0.14, -0.3, this.aim)
@@ -297,18 +304,58 @@ export class Avatar {
     return true
   }
 
-  // astride a motorcycle: knees up on the footrests, leaning into the bars, no weapon in hand
-  sit () {
-    this.hips.position.set(0, 0.86, 0.08)
-    this.torso.position.copy(this.hips.position)
-    for (const [i, L] of this.legs.entries()) {
-      L.thigh.rotation.set(1.3, 0, (i ? -1 : 1) * 0.16)
-      L.knee.rotation.x = -1.5
-      L.ankle.rotation.x = 0.25
-    }
-    this.torso.rotation.set(-0.4, 0, 0)
-    this.aim.rotation.x = 0.05
+  // astride a motorcycle, no weapon in hand. fit (all in the root's frame): hips, footR / footL (where the soles
+  // rest) and grips [right, left] (where the hands go); the legs bend to reach the feet and the back leans until the
+  // hands can reach the bars. Without it: knees up on generic footrests.
+  sit (fit = null) {
     this.rifle.visible = this.pistol.visible = false
+    this.aim.rotation.x = 0.05
+    if (!fit) {
+      this.hips.position.set(0, 0.86, 0.08)
+      this.torso.position.copy(this.hips.position)
+      for (const [i, L] of this.legs.entries()) {
+        L.thigh.rotation.set(1.3, 0, (i ? -1 : 1) * 0.16)
+        L.knee.rotation.x = -1.5
+        L.ankle.rotation.x = 0.25
+      }
+      this.torso.rotation.set(-0.4, 0, 0)
+      return
+    }
+    this.hips.position.copy(fit.hips)
+    this.torso.position.copy(fit.hips)
+    for (const [i, L] of this.legs.entries()) {
+      // the ankle pivot sits above and a little behind the middle of the sole
+      const foot = i ? fit.footR : fit.footL
+      const dx = foot.x - (fit.hips.x + L.thigh.position.x)
+      const dy = foot.y + 0.1 - fit.hips.y
+      const dz = foot.z + 0.05 - fit.hips.z
+      // splay the leg's plane sideways (z, applied last), then bend hip and knee within it (x)
+      const h = Math.hypot(dx, dy)
+      const d = Math.min(Math.hypot(h, dz), THIGH + SHIN - 1e-3)
+      const hip = Math.atan2(-dz, h) + Math.acos((THIGH * THIGH + d * d - SHIN * SHIN) / (2 * THIGH * d))
+      const knee = -(Math.PI - Math.acos((THIGH * THIGH + SHIN * SHIN - d * d) / (2 * THIGH * SHIN)))
+      L.thigh.rotation.set(hip, 0, Math.atan2(dx, -dy), 'ZXY')
+      L.knee.rotation.x = knee
+      L.ankle.rotation.x = -(hip + knee)
+    }
+    // lean forward until the shoulders are an arm's length from the grips
+    const g = fit.grips[0].clone().add(fit.grips[1]).multiplyScalar(0.5)
+    let best = 0; let err = Infinity
+    for (let a = 0; a <= 1.2; a += 0.02) {
+      const e = Math.abs(Math.hypot(g.y - fit.hips.y - 0.5 * Math.cos(a), g.z - fit.hips.z + 0.5 * Math.sin(a)) - ARM_REACH)
+      if (e < err) { err = e; best = a }
+    }
+    this.torso.rotation.set(-best, 0, 0)
+    this.aim.rotation.x = 0
+    this.head.rotation.x = best * 0.6 // eyes on the road
+  }
+
+  // point shoulder i (0 right, 1 left) so its hand lands on the way to `world` (a world-space point; the matrices
+  // must be up to date)
+  reach (i, world) {
+    const s = this.shoulders[i]
+    const to = this.aim.worldToLocal(_v.copy(world)).sub(s.pivot.position).normalize()
+    s.pivot.quaternion.setFromUnitVectors(_u.copy(s.hand).normalize(), to)
   }
 
   showFlash () { this.flashT = 0.06 }

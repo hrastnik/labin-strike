@@ -1,139 +1,72 @@
-// Motorcycles: procedural low-poly WWII bikes (Allies: a Harley-Davidson WLA, Axis: a BMW R35), posed from snapshots
-// or, for the one we ride, from our own BikeBody. Each carries a seated soldier of its side while ridden, leans with
-// the rider's hitbox, and has its collider in our physics world so we bump into it.
+// Motorcycles: the Allies' Harley-Davidson WLA and the Axis' BMW R35 (modelled in Blender, tools/blender/bikes), posed
+// from snapshots or, for the one we ride, from our own BikeBody. Each carries a seated soldier of its side while
+// ridden, leans with the rider's hitbox, and has its collider in our physics world so we bump into it.
 import * as THREE from 'three'
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
 import { PLAYER } from '@shared/constants.js'
 import { BIKE, BikeBody, bikeTeam, rayVsBike, bikeDistance, bikeBox } from '@shared/bikes.js'
 import { wrapAngle } from '@shared/tanks.js'
 import { Avatar } from './avatars.js'
 
+const MODELS = { allies: 'wla', axis: 'r35' } // node name prefixes in bikes.glb
 const WRECK = new THREE.Color(0.16, 0.15, 0.14)
+const WRECK_ROLL = 1.3 // a wreck lies on its left side
 const SMOKE_EVERY = 0.3 // seconds between puffs from a wreck
-const WHEEL_R = 0.35
-const AXLE = 0.73 // front and rear axles either side of the middle
-const HEAD = [0.97, -0.5] // steering head [y, z]
-const RAKE = Math.atan2(HEAD[1] + AXLE, HEAD[0] - WHEEL_R) // the steering axis leans back from the front axle to the head
+const WHEEL_R = 0.33 // both bikes run 19 inch wheels
 // the roll that carries a rider's head as far sideways as a full lean shifts their hitbox
 const MAX_ROLL = Math.asin(PLAYER.leanDist / 1.6)
-const PAINT = { allies: '#4d5230', axis: '#565b55' }
+const _p = new THREE.Vector3()
 
-function mesh (geo, mat, x, y, z, parent) {
-  const m = new THREE.Mesh(geo, mat)
-  m.position.set(x, y, z)
-  m.castShadow = true
-  m.receiveShadow = true
-  parent.add(m)
-  return m
-}
-
-const boxGeo = (w, h, d) => new THREE.BoxGeometry(w, h, d)
-// a cylinder lying along x (axles, bars) or z (pipes, lamps)
-const rodX = (r, len, seg = 8) => new THREE.CylinderGeometry(r, r, len, seg).rotateZ(Math.PI / 2)
-const rodZ = (r, len, seg = 8) => new THREE.CylinderGeometry(r, r, len, seg).rotateX(Math.PI / 2)
-// a strut from a to b ([y, z] in the bike's middle plane), x across
-function strut (a, b, r, mat, x, parent) {
-  const len = Math.hypot(b[0] - a[0], b[1] - a[1])
-  const m = mesh(new THREE.CylinderGeometry(r, r, len, 6), mat, x, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, parent)
-  m.rotation.x = Math.atan2(b[1] - a[1], b[0] - a[0])
-  return m
-}
-
-function starShape (r) {
-  const s = new THREE.Shape()
-  for (let i = 0; i < 10; i++) {
-    const a = (i / 10) * Math.PI * 2
-    const k = i % 2 ? r * 0.4 : r
-    s[i ? 'lineTo' : 'moveTo'](Math.sin(a) * k, Math.cos(a) * k)
-  }
-  return s
+export async function loadBikes (url, scene, RAPIER, world) {
+  const loader = new GLTFLoader()
+  loader.setMeshoptDecoder(MeshoptDecoder)
+  const gltf = await loader.loadAsync(url)
+  return new Bikes(gltf, scene, RAPIER, world)
 }
 
 // one model per side, reused match after match
 class BikeView {
-  constructor (team) {
+  constructor (gltf, team) {
+    const k = MODELS[team]
+    const model = gltf.scene.getObjectByName(`${k}_body`)
+    const part = (name) => model.getObjectByName(`${k}_${name}`)
     this.root = new THREE.Group()
     this.tilt = new THREE.Group() // leans into the turns, or lies on its side as a wreck
     this.root.add(this.tilt)
-    const std = (color, roughness = 0.75, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness, flatShading: true })
-    const paint = std(PAINT[team], 0.7)
-    paint.side = THREE.DoubleSide // the open fenders
-    const metal = std('#2c2c2b', 0.5, 0.5)
-    const rubber = std('#141414', 0.95)
-    const leather = std(team === 'allies' ? '#5a3d24' : '#2a2420', 0.9)
-    const chrome = std('#8d8d88', 0.35, 0.8)
-    const lens = new THREE.MeshStandardMaterial({ color: '#e9e2c0', emissive: '#4a4530', roughness: 0.2 })
-    this.materials = [paint, metal, rubber, leather, chrome, lens].map((mat) => ({ mat, color: mat.color.clone() }))
-    const t = this.tilt
-
-    const wheel = (z, parent) => {
-      const w = new THREE.Group()
-      w.position.set(0, WHEEL_R, z)
-      parent.add(w)
-      mesh(new THREE.TorusGeometry(WHEEL_R - 0.06, 0.06, 6, 16).rotateY(Math.PI / 2), rubber, 0, 0, 0, w)
-      mesh(rodX(0.07, 0.13), metal, 0, 0, 0, w)
-      for (let i = 0; i < 3; i++) mesh(boxGeo(0.02, (WHEEL_R - 0.08) * 2, 0.02), metal, 0, 0, 0, w).rotation.x = (i / 3) * Math.PI
-      return w
-    }
-    // an arc over the wheel at z, from angle `from` (0 straight back, pi/2 the top) through len
-    const fender = (z, parent, from, len) => {
-      const g = new THREE.CylinderGeometry(WHEEL_R + 0.05, WHEEL_R + 0.05, 0.15, 12, 1, true, from, len).rotateZ(Math.PI / 2)
-      mesh(g, paint, 0, WHEEL_R, z, parent)
-    }
-
-    this.rear = wheel(AXLE, t)
-    fender(AXLE, t, -0.3, 2.2)
-    // the fork steers about the raked axis through the head; parts inside it are placed in the bike's own frame
-    const head = new THREE.Group()
-    head.position.set(0, HEAD[0], HEAD[1])
-    head.rotation.x = RAKE
-    t.add(head)
-    this.fork = new THREE.Group()
-    head.add(this.fork)
-    const unrake = new THREE.Group()
-    unrake.rotation.x = -RAKE
-    this.fork.add(unrake)
-    const f = new THREE.Group()
-    f.position.set(0, -HEAD[0], -HEAD[1])
-    unrake.add(f)
-    this.front = wheel(-AXLE, f)
-    fender(-AXLE, f, 1.2, 2.1)
-    for (const x of [-0.09, 0.09]) strut([WHEEL_R, -AXLE], [HEAD[0] + 0.02, HEAD[1] - 0.03], 0.025, chrome, x, f)
-    mesh(rodX(0.018, 0.56), metal, 0, 1.02, -0.43, f) // bars
-    for (const x of [-0.26, 0.26]) mesh(rodX(0.03, 0.1), rubber, x, 1.02, -0.43, f) // grips
-    mesh(rodZ(0.095, 0.14, 10), metal, 0, 0.9, -0.62, f) // headlamp
-    this.lamp = mesh(new THREE.CircleGeometry(0.08, 10), lens, 0, 0.9, -0.691, f)
-    this.lamp.rotation.y = Math.PI
-
-    // frame, engine and seat
-    strut([0.5, 0.05], HEAD, 0.03, metal, 0, t) // down tube
-    strut([0.92, 0.25], HEAD, 0.03, metal, 0, t) // top tube
-    for (const x of [-0.08, 0.08]) strut([WHEEL_R, AXLE], [0.42, 0.05], 0.022, metal, x, t) // chain stays
-    for (const x of [-0.08, 0.08]) strut([WHEEL_R, AXLE], [0.82, 0.35], 0.02, metal, x, t) // seat stays
-    mesh(boxGeo(0.3, 0.2, 0.5), paint, 0, 0.9, -0.2, t) // fuel tank
-    mesh(boxGeo(0.28, 0.08, 0.36), leather, 0, 0.8, 0.16, t) // saddle
-    mesh(boxGeo(0.24, 0.24, 0.36), metal, 0, 0.42, 0, t) // crankcase
-    if (team === 'axis') {
-      // the BMW's flat twin, its cylinders standing out either side
-      mesh(rodX(0.075, 0.62, 8), metal, 0, 0.5, -0.12, t)
-      for (const x of [-0.3, 0.3]) mesh(boxGeo(0.06, 0.18, 0.18), metal, x, 0.5, -0.12, t)
-      for (const x of [-0.17, 0.17]) mesh(rodZ(0.035, 0.85), chrome, x, 0.28, 0.32, t) // exhausts
-    } else {
-      // the Harley's V-twin and its single pipe; a white star on the tank
-      for (const [a, z] of [[0.45, -0.13], [-0.45, 0.13]]) mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.3, 8), metal, 0, 0.66, z, t).rotation.x = a
-      mesh(rodZ(0.04, 1), chrome, 0.16, 0.3, 0.3, t)
-      const star = new THREE.MeshStandardMaterial({ color: '#d8d6c8', roughness: 0.8, side: THREE.DoubleSide })
-      this.materials.push({ mat: star, color: star.color.clone() })
-      for (const x of [-0.152, 0.152]) mesh(new THREE.ShapeGeometry(starShape(0.07)), star, x, 0.9, -0.2, t).rotation.y = Math.PI / 2
-      mesh(boxGeo(0.12, 0.26, 0.32), leather, -0.22, 0.6, 0.58, t) // saddlebags
-      mesh(boxGeo(0.12, 0.26, 0.32), leather, 0.22, 0.6, 0.58, t)
-    }
-    for (const x of [-0.24, 0.24]) mesh(boxGeo(0.12, 0.03, 0.06), metal, x, 0.3, -0.16, t) // footrests
+    this.tilt.add(model)
+    // the fork's rest rotation is the rake about x: steering turns it about its own y after that
+    this.fork = part('fork')
+    this.front = part('wheel_f')
+    this.rear = part('wheel_r')
+    this.lamp = part('lamp')
+    this.grips = [part('grip_r'), part('grip_l')]
+    this.materials = []
+    model.traverse((o) => {
+      if (!o.isMesh) return
+      o.castShadow = true
+      o.receiveShadow = true
+      if (!this.materials.some((m) => m.mat === o.material)) this.materials.push({ mat: o.material, color: o.material.color.clone() })
+    })
 
     this.rider = new Avatar(0, team, '', false)
-    this.rider.sit()
+    this.root.updateMatrixWorld(true)
+    const at = (name) => this.tilt.worldToLocal(part(name).getWorldPosition(new THREE.Vector3()))
+    this.rider.sit({
+      hips: at('seat').add(new THREE.Vector3(0, 0.08, 0.02)),
+      footR: at('foot_r'),
+      footL: at('foot_l'),
+      grips: this.grips.map((g) => this.tilt.worldToLocal(g.getWorldPosition(new THREE.Vector3())))
+    })
     this.rider.root.position.set(0, 0, 0)
     this.rider.root.visible = false
-    t.add(this.rider.root)
+    this.tilt.add(this.rider.root)
+
+    // how high a wreck's lowest point would sink below the ground, lying on its side
+    this.tilt.rotation.z = WRECK_ROLL
+    this.root.updateMatrixWorld(true)
+    this.wreckLift = -new THREE.Box3().setFromObject(model, true).min.y
+    this.tilt.rotation.z = 0
     this.wrecked = false
   }
 
@@ -152,8 +85,8 @@ class BikeView {
     this.root.position.set(s.pos[0], s.pos[1], s.pos[2])
     this.root.rotation.y = s.yaw
     if (this.wrecked) {
-      this.tilt.rotation.z = 1.3
-      this.tilt.position.y = 0.12
+      this.tilt.rotation.z = WRECK_ROLL
+      this.tilt.position.y = this.wreckLift
       this.fork.rotation.y = 0.5
       this.rider.root.visible = false
       return
@@ -166,15 +99,20 @@ class BikeView {
     const lock = Math.max(-0.45, Math.min(0.45, turn / Math.max(1.5, Math.abs(speed)) * 1.6))
     this.fork.rotation.y += (lock - this.fork.rotation.y) * Math.min(1, dt * 10)
     this.rider.root.visible = !!s.driver
+    if (s.driver) {
+      // hands follow the bars as they steer
+      this.root.updateMatrixWorld(true)
+      for (let i = 0; i < 2; i++) this.rider.reach(i, this.grips[i].getWorldPosition(_p))
+    }
   }
 }
 
 export class Bikes {
-  constructor (scene, RAPIER, world) {
+  constructor (gltf, scene, RAPIER, world) {
     this.scene = scene
     this.R = RAPIER
     this.world = world
-    this.views = { allies: new BikeView('allies'), axis: new BikeView('axis') }
+    this.views = { allies: new BikeView(gltf, 'allies'), axis: new BikeView(gltf, 'axis') }
     this.map = new Map() // id -> state
     this.mine = null // the state of the bike we ride
   }

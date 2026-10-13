@@ -15,7 +15,7 @@ import { ShadowCache } from './shadowcache.js'
 import { loadCars } from './cars.js'
 import { loadCats } from './cats.js'
 import { loadTanks } from './tanks.js'
-import { Bikes } from './bikes.js'
+import { loadBikes } from './bikes.js'
 import { loadWeaponModels } from './weaponmodels.js'
 import { Input } from './input.js'
 import { LocalPlayer } from './player.js'
@@ -894,7 +894,7 @@ async function boot () {
     tanks = await loadTanks(scene, RAPIER, world)
     progress(0.99, 'Arming…')
     await weaponModels // before anything builds a weapon, grenade or knife
-    bikes = new Bikes(scene, RAPIER, world) // its riders are soldiers, who carry a weapon
+    bikes = await loadBikes('/assets/bikes/bikes.glb', scene, RAPIER, world) // its riders are soldiers, who carry a weapon
     fitSunToBounds(sun, mapData.bounds)
     // the map and the parked cars never move: their shadows are rendered once
     shadowCache.addStatic(mapRoot, ...(cars ? [cars] : []))
