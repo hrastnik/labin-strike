@@ -11,6 +11,7 @@ import { NADE_DT, createGrenade, stepGrenade } from '../shared/grenade.js'
 import { lineOfSight, rayMap } from '../shared/physics.js'
 import { TANK, tankPoint, gunRay, armourFor, underHull } from '../shared/tanks.js'
 import { CAT, CAT_STATE, CAT_COATS } from '../server/cats.js'
+import { rayVsPlayer, leanShift } from '../shared/hitbox.js'
 import { SD, SD_SITES, otherTeam } from '../shared/modes.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -267,6 +268,29 @@ test('snapshots carry the weapon actually in hand', () => {
   game.broadcastSnapshot()
   assert.equal(WEAPON_LIST[row(ch.last('snap'))[7]], 'g43', 'unknown slot index falls back to primary')
   assert.ok(WEAPONS[WEAPON_LIST[row(ch.last('snap'))[7]]])
+  ch.disconnect()
+})
+
+test('a lean reaches the snapshots, clamped, and carries the head hitbox sideways with it', () => {
+  const ch = connect('Lima', { team: 'axis' })
+  const p = deploy(ch, { cls: 'officer', primary: 'g43', secondary: 'luger' })
+  const row = () => { game.broadcastSnapshot(); return ch.last('snap').p.find((e) => e[0] === p.id) }
+  ch.send('st', [p.life, p.pos[0], p.pos[1], p.pos[2], 0, 0, 0, 0, clock, 1])
+  assert.equal(row()[11], 1)
+  ch.send('st', [p.life, p.pos[0], p.pos[1], p.pos[2], 0, 0, 0, 0, clock, -5])
+  assert.equal(row()[11], -1)
+  ch.send('st', [p.life, p.pos[0], p.pos[1], p.pos[2], 0, 0, 0, 0, clock, 'x'])
+  assert.equal(row()[11], 0)
+
+  // facing -z, a level shot from the front grazing past the upright head's right side
+  const headY = PLAYER.height - 0.17
+  const o = [0.3, headY, -10]; const d = [0, 0, 1]
+  assert.equal(rayVsPlayer(o, d, 20, 0, 0, 0, false), null)
+  assert.equal(rayVsPlayer(o, d, 20, 0, 0, 0, false, leanShift(0, 1))?.zone, 'head')
+  assert.equal(rayVsPlayer(o, d, 20, 0, 0, 0, false, leanShift(0, -1)), null)
+  // the legs stay planted
+  const shin = [0, 0.4, -10]
+  assert.equal(rayVsPlayer(shin, d, 20, 0, 0, 0, false, leanShift(0, 1))?.zone, 'legs')
   ch.disconnect()
 })
 

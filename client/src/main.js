@@ -7,7 +7,7 @@ import { WEAPONS, CLASSES, GRENADE, KNIFE, sanitizeLoadout } from '@shared/weapo
 import { MODES, SD, SD_SITES, otherTeam, sdSiteAt } from '@shared/modes.js'
 import { parseGlbJson, extractMapData } from '@shared/mapdata.js'
 import { buildMapWorld, rayMap, lineOfSight } from '@shared/physics.js'
-import { rayVsPlayer, knifeReach } from '@shared/hitbox.js'
+import { rayVsPlayer, knifeReach, leanShift } from '@shared/hitbox.js'
 import { TANK, tankSide, gunRay, wrapAngle } from '@shared/tanks.js'
 import { createRenderer, createScene, fitSunToBounds, fetchMap, parseMap } from './renderer.js'
 import { ShadowCache } from './shadowcache.js'
@@ -30,6 +30,8 @@ import { Net } from './net.js'
 import { LoadoutMenu } from './loadout.js'
 
 const BASE_FOV = 68
+const LEAN_ROLL = 0.18 // camera roll at a full lean, radians
+const LEAN_GAP = 0.2 // closest the leaning eye gets to a wall
 const $ = (id) => document.getElementById(id)
 const params = new URLSearchParams(location.search)
 
@@ -671,7 +673,7 @@ function rayPlayers (o, d, maxT) {
   let best = null
   for (const a of avatars.map.values()) {
     if (!a.exposed) continue
-    const h = rayVsPlayer(o, d, maxT, a.pos.x, a.pos.y, a.pos.z, a.crouched)
+    const h = rayVsPlayer(o, d, maxT, a.pos.x, a.pos.y, a.pos.z, a.crouched, leanShift(a.yaw, a.lean))
     if (h && (!best || h.t < best.t)) best = { ...h, avatar: a }
   }
   return best
@@ -889,12 +891,12 @@ function updateGame (dt, now) {
   const canAct = player.alive && locked && G.match.state === 'playing' && !loadoutMenu.isOpen
   // Search and Destroy: hold F to plant or defuse; the server decides whether it counts, and we hold still meanwhile
   const sdLive = G.match.mode === 'sd' && G.match.roundState === 'live'
-  const wantUse = canAct && !G.driving && sdLive && input.down('KeyF')
-  if (wantUse !== G.useHeld) { G.useHeld = wantUse; net.emit('use', { on: wantUse }, true) }
   const acting = !!G.act
-  // E climbs into our side's tank when standing beside it, and out again
+  // F also climbs into our side's tank when standing beside it, and out again
   const board = canAct && !G.driving && !acting && !weapons.busy ? tanks?.boardable(G.team, player.pos) : null
-  if (canAct && input.wasPressed('KeyE') && (G.driving || board)) net.emit('tank', { on: !G.driving }, true)
+  if (canAct && input.wasPressed('KeyF') && (G.driving || board)) net.emit('tank', { on: !G.driving }, true)
+  const wantUse = canAct && !G.driving && !board && sdLive && input.down('KeyF')
+  if (wantUse !== G.useHeld) { G.useHeld = wantUse; net.emit('use', { on: wantUse }, true) }
 
   if (G.driving) driveTank(dt, now, G.driving, canAct)
   else moveOnFoot(dt, now, canAct, acting)
@@ -919,7 +921,7 @@ function updateGame (dt, now) {
   } else {
     hud.death(!player.alive && player.deathPos && G.match.state === 'playing', G.killerName, (G.respawnAt - now) / 1000, next)
   }
-  const sites = updateObjectives(now, sdLive, acting, board ? `Press <kbd>E</kbd> to drive the ${tankSide(board.team).name}` : '')
+  const sites = updateObjectives(now, sdLive, acting, board ? `Press <kbd>F</kbd> to drive the ${tankSide(board.team).name}` : '')
   hud.scoreboard(input.down('Tab') || G.match.state === 'ended', G.roster, G.match, G.myId, G.aliveIds)
   hud.netstat(G.myPing, G.fps)
   const others = []
@@ -947,7 +949,6 @@ function moveOnFoot (dt, now, canAct, acting) {
   let switchTo = null
   if (input.wasPressed('Digit1')) switchTo = 0
   if (input.wasPressed('Digit2')) switchTo = 1
-  if (input.wasPressed('KeyQ')) switchTo = weapons.prevIndex
   if (input.mouse.wheel) switchTo = (weapons.index + 1) % weapons.slots.length
   const armed = canAct && !acting
   const shots = weapons.update(dt, {
@@ -974,6 +975,7 @@ function moveOnFoot (dt, now, canAct, acting) {
   // aiming or pulling the trigger drops out of the sprint
   const sprint = forward && !crouch && (input.down('ShiftLeft') || input.down('ShiftRight')) &&
     !(canAct && (input.mouse.left || input.mouse.right)) && !weapons.busy
+  const lean = canAct && !acting && !sprint ? (input.down('KeyE') ? 1 : 0) - (input.down('KeyQ') ? 1 : 0) : 0
   const move = player.update(dt, {
     f: forward,
     b: steer && (input.down('KeyS') || input.down('ArrowDown')),
@@ -983,7 +985,9 @@ function moveOnFoot (dt, now, canAct, acting) {
     crouch,
     sprint,
     ads: weapons.adsT,
-    speedMul: weapons.def.moveMul
+    speedMul: weapons.def.moveMul,
+    lean,
+    leanRoom
   })
   if (move.steps) audio.footstep(null, player.crouched ? 0.05 : 0.11)
   if (move.landed) { viewmodel.land(Math.min(1, move.landed / 9)); audio.footstep(null, 0.2) }
@@ -992,7 +996,7 @@ function moveOnFoot (dt, now, canAct, acting) {
   const ws = weapons
   if (player.alive) {
     player.eyePos(camera.position)
-    camera.rotation.set(player.pitch + ws.punch.pitch, player.yaw + ws.punch.yaw, 0)
+    camera.rotation.set(player.pitch + ws.punch.pitch, player.yaw + ws.punch.yaw, -player.lean * LEAN_ROLL)
     if (G.shake > 0.001) {
       camera.rotation.x += (Math.random() - 0.5) * 0.06 * G.shake
       camera.rotation.y += (Math.random() - 0.5) * 0.06 * G.shake
@@ -1050,7 +1054,7 @@ function moveOnFoot (dt, now, canAct, acting) {
     G.lastSend = Math.max(G.lastSend + 1000 / INPUT_RATE, now - 50)
     const p = player.pos
     const flags = (player.crouched ? 2 : 0) | (ws.adsT > 0.5 ? 4 : 0) | (ws.reloading ? 8 : 0)
-    net.emit('st', [player.life, r2(p.x), r2(p.y), r2(p.z), Math.round(player.yaw * 1000) / 1000, Math.round(player.pitch * 1000) / 1000, flags, ws.index, Math.round(now)])
+    net.emit('st', [player.life, r2(p.x), r2(p.y), r2(p.z), Math.round(player.yaw * 1000) / 1000, Math.round(player.pitch * 1000) / 1000, flags, ws.index, Math.round(now), r2(player.lean)])
   }
 
   // viewmodel (hidden behind the scope overlay when a scoped rifle is fully raised)
@@ -1081,6 +1085,14 @@ function moveOnFoot (dt, now, canAct, acting) {
   hud.weapon(ws)
   const spread = ws.spread({ speed: player.speed, grounded: player.grounded, crouched: player.crouched })
   hud.crosshair(spread, fovCurrent, player.alive && ws.adsT < 0.5 && !ws.reloading && ws.sprintT < 0.5 && !ws.busy, player.alive ? crosshairTarget() : null)
+}
+
+function leanRoom (side) {
+  const p = player.pos
+  const s = leanShift(player.yaw, side)
+  const d = [s[0] / PLAYER.leanDist, 0, s[1] / PLAYER.leanDist]
+  const hit = rayMap(RAPIER, world, [p.x, p.y + player.eye, p.z], d, PLAYER.leanDist + LEAN_GAP)
+  return hit ? Math.max(0, (hit.dist - LEAN_GAP) / PLAYER.leanDist) : 1
 }
 
 const CAM_BACK = 8 // metres behind the turret

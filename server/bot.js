@@ -4,7 +4,7 @@
 import { PLAYER, WEAPONS } from '../shared/constants.js'
 import { GRENADE, KNIFE } from '../shared/weapons.js'
 import { SD, SD_SITES } from '../shared/modes.js'
-import { knifeReach } from '../shared/hitbox.js'
+import { knifeReach, leanShift, leanFactor } from '../shared/hitbox.js'
 import { CharacterMotor, lineOfSight } from '../shared/physics.js'
 import { TANK } from '../shared/tanks.js'
 
@@ -106,6 +106,13 @@ export class Bot {
     return [p.pos[0], p.pos[1] + (this.motor.crouched ? PLAYER.crouchEye : PLAYER.eye), p.pos[2]]
   }
 
+  // a point at height y above q's feet, carried sideways with q's lean
+  bodyPoint (q, y) {
+    const s = leanShift(q.yaw, q.lean)
+    const f = leanFactor(y, q.crouch)
+    return [q.pos[0] + s[0] * f, q.pos[1] + y, q.pos[2] + s[1] * f]
+  }
+
   perceive (now) {
     const p = this.p
     const eye = this.eye()
@@ -119,8 +126,8 @@ export class Bot {
       const aware = q.id === this.target || q.id === this.lastHurtBy || now - q.firedAt < 600
       if (ang > 1.35 && dist > 4 && !(aware && now - this.lastHurtAt < 3000) && q.id !== this.target) continue
       const h = q.crouch ? PLAYER.crouchHeight : PLAYER.height
-      const head = [q.pos[0], q.pos[1] + h - 0.15, q.pos[2]]
-      const chest = [q.pos[0], q.pos[1] + h * 0.62, q.pos[2]]
+      const head = this.bodyPoint(q, h - 0.15)
+      const chest = this.bodyPoint(q, h * 0.62)
       if (!lineOfSight(this.g.RAPIER, this.g.world, eye, chest) && !lineOfSight(this.g.RAPIER, this.g.world, eye, head)) continue
       const score = dist * (q.id === this.target ? 0.6 : 1)
       if (score < bestScore) { bestScore = score; best = q }
@@ -166,8 +173,8 @@ export class Bot {
       // ----- combat
       const eye = this.eye()
       const h = tgt.crouch ? PLAYER.crouchHeight : PLAYER.height
-      const aimY = tgt.pos[1] + (this.aimHead ? h - 0.17 : h * 0.6)
-      const dx = tgt.pos[0] - eye[0]; const dy = aimY - eye[1]; const dz = tgt.pos[2] - eye[2]
+      const at = this.bodyPoint(tgt, this.aimHead ? h - 0.17 : h * 0.6)
+      const dx = at[0] - eye[0]; const dy = at[1] - eye[1]; const dz = at[2] - eye[2]
       const flat = Math.hypot(dx, dz)
       lookYaw = Math.atan2(-dx, -dz)
       lookPitch = Math.atan2(dy, flat)
@@ -315,8 +322,8 @@ export class Bot {
     const p = this.p
     const eye = this.eye()
     const h = tgt.crouch ? PLAYER.crouchHeight : PLAYER.height
-    const aimY = tgt.pos[1] + (this.aimHead ? h - 0.17 : h * 0.6)
-    const want = Math.atan2(-(tgt.pos[0] - eye[0]), -(tgt.pos[2] - eye[2]))
+    const at = this.bodyPoint(tgt, this.aimHead ? h - 0.17 : h * 0.6)
+    const want = Math.atan2(-(at[0] - eye[0]), -(at[2] - eye[2]))
     if (Math.abs(wrap(want - p.yaw)) > 0.14) return
     const w = this.wdef
     if (this.burstLeft <= 0) {
@@ -331,7 +338,7 @@ export class Bot {
     const ex = Math.sin(now * 0.0047 + this.seed) * err
     const ey = Math.cos(now * 0.0039 + this.seed * 1.7) * err * 0.7
     const yaw = want + ex
-    const pitch = Math.atan2(aimY - eye[1], Math.hypot(tgt.pos[0] - eye[0], tgt.pos[2] - eye[2])) + ey
+    const pitch = Math.atan2(at[1] - eye[1], Math.hypot(at[0] - eye[0], at[2] - eye[2])) + ey
     // automatics are sprayed from the hip; rifles are aimed when the bot stands still
     const still = w.action === 'auto' ? w.spread.hip * 0.9 : w.spread.hip + (w.spread.ads - w.spread.hip) * 0.7
     let spread = (moving ? w.spread.hip * 1.35 : still) * (this.motor.crouched ? w.spread.crouchMul : 1) * (1.25 - this.skill * 0.5)

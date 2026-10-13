@@ -172,7 +172,7 @@ export class Hud {
     this.set('wname', gun, (v) => { this.el.weaponName.textContent = v })
     const left = ready < 1 ? `Loading ${Math.round(ready * 100)}%` : 'Ready'
     this.set('mag', left, (v) => { this.el.ammoMag.textContent = v; this.el.ammoMag.classList.toggle('low', ready < 1) })
-    this.set('hint', 'E to get out', (v) => { this.el.weaponHint.textContent = v })
+    this.set('hint', 'F to get out', (v) => { this.el.weaponHint.textContent = v })
   }
 
   // where the gun actually points, in screen px (null when off screen); ready: loaded

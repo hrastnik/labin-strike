@@ -11,7 +11,7 @@ import { parseGlbJson, extractMapData } from '../shared/mapdata.js'
 import { buildMapWorld, rayMap, lineOfSight } from '../shared/physics.js'
 import { NADE_DT, createGrenade, stepGrenade } from '../shared/grenade.js'
 import { MODES, SD } from '../shared/modes.js'
-import { rayVsPlayer, knifeReach } from '../shared/hitbox.js'
+import { rayVsPlayer, knifeReach, leanShift } from '../shared/hitbox.js'
 import { NavGrid } from './navgrid.js'
 import { Bot } from './bot.js'
 import { Cats, CAT } from './cats.js'
@@ -177,6 +177,7 @@ export class Game {
       yaw: 0,
       pitch: 0,
       crouch: false,
+      lean: 0, // -1 left .. 1 right
       ads: false,
       reloading: false,
       slot: 0, // 0 = primary, 1 = secondary (which loadout weapon is in hand)
@@ -266,6 +267,7 @@ export class Game {
     p.alive = true
     p.tank = null
     p.crouch = false
+    p.lean = 0
     p.life++
     p.respawnAt = 0
     p.spawnedAt = this.now()
@@ -395,7 +397,7 @@ export class Game {
 
   handleState (p, s) {
     if (!Array.isArray(s) || s.length < 8 || !p.alive || p.tank || s[0] !== p.life) return
-    const [, x, y, z, yaw, pitch, flags, weapon] = s
+    const [, x, y, z, yaw, pitch, flags, weapon, , lean] = s
     if (![x, y, z, yaw, pitch].every(Number.isFinite)) return
     const now = this.now()
     const dt = Math.max(0.05, (now - p.lastStateAt) / 1000)
@@ -413,6 +415,7 @@ export class Game {
     p.yaw = yaw
     p.pitch = Math.max(-1.55, Math.min(1.55, pitch))
     p.crouch = !!(flags & 2)
+    p.lean = Number.isFinite(lean) ? Math.max(-1, Math.min(1, lean)) : 0
     p.ads = !!(flags & 4)
     p.reloading = !!(flags & 8)
     p.slot = weapon === 1 ? 1 : 0
@@ -585,7 +588,7 @@ export class Game {
     if (armour) maxT = armour.t
     for (const q of this.players.values()) {
       if (q === p || !q.alive || q.tank || q.team === p.team) continue
-      const h = rayVsPlayer(o, d, maxT, q.pos[0], q.pos[1], q.pos[2], q.crouch)
+      const h = rayVsPlayer(o, d, maxT, q.pos[0], q.pos[1], q.pos[2], q.crouch, leanShift(q.yaw, q.lean))
       if (h) { maxT = h.t; victim = q; zone = h.zone }
     }
     const e = [o[0] + d[0] * maxT, o[1] + d[1] * maxT, o[2] + d[2] * maxT]
@@ -750,7 +753,7 @@ export class Game {
         (now - p.firedAt < 400 ? 16 : 0) | (now < p.protectUntil ? 32 : 0) | (p.tank ? 64 : 0)
       const age = Math.max(0, Math.min(1000, Math.round(now - p.posAt)))
       const weapon = WEAPON_CODE[p.slot === 1 ? p.loadout.secondary : p.loadout.primary]
-      list.push([p.id, r2(p.pos[0]), r2(p.pos[1]), r2(p.pos[2]), r3(p.yaw), r3(p.pitch), flags, weapon, Math.round(p.hp), p.life, age])
+      list.push([p.id, r2(p.pos[0]), r2(p.pos[1]), r2(p.pos[2]), r3(p.yaw), r3(p.pitch), flags, weapon, Math.round(p.hp), p.life, age, r2(p.lean)])
     }
     this.emitAll('snap', { t: now, p: list, c: this.cats.snapshot(), k: this.tanks.snapshot(now) })
   }

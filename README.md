@@ -23,12 +23,12 @@ Features:
 
 - 22 WWII weapons across six classes (Rifleman, Assault, Support, Marksman, Officer, Engineer), each with its own damage falloff, fire rate, recoil, spread, reload style, handling and movement weight
 - Strict faction rules: Axis soldiers only ever carry Axis weapons and Allied soldiers Allied ones, enforced by the server
-- Aim down sights, sprint, crouch, jump, and spawn protection
+- Aim down sights, sprint, crouch, lean (<kbd>Q</kbd>/<kbd>E</kbd>, to peek round a corner without stepping out), jump, and spawn protection
 - Every soldier, on either side, carries one Stielhandgranate 24 stick grenade per life. It bounces off the map and has a 3.5 s fuse that starts when the cord is pulled: hold G to cook it, but hold it too long and it goes off in your hand, and if you are killed with it cooking it drops at your feet. Bots throw theirs at enemies who duck behind cover
 - A knife on <kbd>V</kbd> (M3 trench knife or S84/98 bayonet): one stab kills at arm's length. Bots use it up close, and they move in for it while reloading
 - Every death, friendly or enemy, leaves an ammo can under the body for 30 s. Walk over it to refill your own weapons' reserve, up to what you spawned with
 - Health regenerates COD2-style after 5 s without taking damage
-- Tanks, switched on from the pause screen: one per side per match, an M4 Sherman for the Allies and a Panzer IV for the Axis, parked near each side's spawn. Walk up to your own side's tank and press <kbd>E</kbd> to drive it from a chase camera: <kbd>W</kbd><kbd>S</kbd> throttle, <kbd>A</kbd><kbd>D</kbd> turn the hull, the turret follows the mouse, and <kbd>LMB</kbd> fires a high-explosive shell (4 s reload). A tank has 600 armour: rifles and machine guns barely scratch it, grenades, shells and the S&D bomb are what kill it. It runs over enemies, and the crew goes down with it. A destroyed tank stays a smoking wreck until the next match. Bots shoot at enemy tanks and lob their grenades at them
+- Tanks, switched on from the pause screen: one per side per match, an M4 Sherman for the Allies and a Panzer IV for the Axis, parked near each side's spawn. Walk up to your own side's tank and press <kbd>F</kbd> to drive it from a chase camera: <kbd>W</kbd><kbd>S</kbd> throttle, <kbd>A</kbd><kbd>D</kbd> turn the hull, the turret follows the mouse, and <kbd>LMB</kbd> fires a high-explosive shell (4 s reload). A tank has 600 armour: rifles and machine guns barely scratch it, grenades, shells and the S&D bomb are what kill it. It runs over enemies, and the crew goes down with it. A destroyed tank stays a smoking wreck until the next match. Bots shoot at enemy tanks and lob their grenades at them
 - Three cats roam the map in place of Counter-Strike's chickens: the main developer's blue-cream tabby plus a ginger and a tuxedo. They meow, flop over on the pavement, and hiss and bolt when you get too close, shoot near them or throw a grenade. Crouch to sneak up on one
 - Server-side bots fill the match up to 8 players. They use A* pathfinding, line-of-sight targeting and human-like aim error
 - Killfeed, compass/minimap, hitmarkers, damage direction indicators
@@ -58,10 +58,10 @@ Handy URL params: `?name=Mateo` pre-fills the callsign, `?team=axis` picks a sid
 | <kbd>LMB</kbd> | Fire | <kbd>RMB</kbd> | Aim down sights |
 | <kbd>Shift</kbd> | Sprint (forward) | <kbd>G</kbd> | Throw grenade (hold to cook) |
 | <kbd>Space</kbd> | Jump | <kbd>C</kbd> / <kbd>Ctrl</kbd> | Crouch |
-| <kbd>R</kbd> | Reload | <kbd>1</kbd> / <kbd>2</kbd> / <kbd>Q</kbd> | Rifle / pistol / last weapon |
+| <kbd>R</kbd> | Reload | <kbd>1</kbd> / <kbd>2</kbd> | Rifle / pistol |
 | <kbd>Tab</kbd> | Scoreboard | <kbd>Esc</kbd> | Pause |
 | <kbd>V</kbd> | Knife | <kbd>B</kbd> | Loadout / switch side |
-| <kbd>F</kbd> (hold) | Plant / defuse (Search and Destroy) | <kbd>E</kbd> | Get in / out of your side's tank |
+| <kbd>Q</kbd> / <kbd>E</kbd> | Lean left / right | <kbd>F</kbd> | Get in / out of your side's tank; hold to plant / defuse (Search and Destroy) |
 
 ## How it works
 
