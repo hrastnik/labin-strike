@@ -1,17 +1,15 @@
-"""Game export: every car model becomes 2 LODs x 3 meshes, named <model>_<lod>_<group>:
+"""Game export: every car model becomes 3 meshes (full detail only, no LODs), named <model>_<group>:
   paint  - car_paint only (white; the client tints it per instance)
   opaque - everything else that is opaque, one material sampling a small atlas (palette cells + licence plates)
   glass  - windows and lamp lenses, the same atlas with alpha (blended)
-so a model costs 3 draw calls per LOD however many cars use it. Written to client/public/assets/cars/cars.glb."""
-import math
+so a model costs 3 draw calls however many cars use it. Written to client/public/assets/cars/cars.glb."""
 import os
 
 import bmesh
 import bpy
 import numpy as np
-from mathutils import Matrix, Vector
 
-from . import model, parts, specs
+from . import model, specs
 from .materials import define as define_materials
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -22,8 +20,6 @@ OUT_BLEND = os.path.join(HERE, 'cars.blend')
 AW, AH = 1024, 512          # atlas: plates 512x448 top-left, palette 8x8 cells of 64 px in the right half
 CELL = 64
 GLASS = ('car_glass', 'car_lens', 'car_tail_lens')
-LOD1_SKIP = ('_cabin', '_wipers', '_antenna', '_handles')
-LOD1_TRIS = {'paint': 950, 'opaque': 650, 'glass': 160}
 
 
 def _lin2srgb(c):
@@ -181,41 +177,6 @@ def _split(bm, mats, atlas, M_out, prefix, coll):
     return out
 
 
-def _decimate_to(ob, tris):
-    n = sum(len(p.vertices) - 2 for p in ob.data.polygons)
-    if n <= tris:
-        return
-    d = ob.modifiers.new('dec', 'DECIMATE')
-    d.decimate_type = 'COLLAPSE'
-    d.ratio = tris / n
-    d.use_symmetry = True
-    d.symmetry_axis = 'Y'
-    from .ops import apply_mods
-    apply_mods(ob)
-    ob.data.validate()
-
-
-def low_wheels(spec, M, coll):
-    """LOD1 wheels: 12-sided tyre + flat rim disc, 4 copies."""
-    R, tw = spec['wheel_r'], spec['tyre_w']
-    rr = spec.get('rim_in', 16) * 0.0254 / 2
-    obs = []
-    for ax in spec['axles']:
-        for s in (1, -1):
-            bm = bmesh.new()
-            rings = parts.lathe(bm, [(rr, -tw / 2), (R, -tw / 2), (R, tw / 2), (rr, tw / 2)], 12, mat=0)
-            c = bm.verts.new((0, tw / 2 - 0.01, 0))
-            ring = parts.lathe(bm, [(rr, tw / 2 - 0.01)], 12, mat=1)[0]
-            for i in range(12):
-                f = bm.faces.new((c, ring[(i + 1) % 12], ring[i]))
-                f.material_index = 1
-            bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
-            ob = parts._mesh(f'{spec["name"]}_lowwheel', bm, [M['rubber'], M['alloy']], coll, smooth=False)
-            ob.matrix_world = Matrix.Translation((ax, s * spec['track'] / 2, R)) @ (Matrix.Rotation(math.pi, 4, 'Z') if s < 0 else Matrix())
-            obs.append(ob)
-    return obs
-
-
 def export_models(names=None, decimate=0.45, write=True):
     names = names or list(specs.SPECS)
     M = define_materials()
@@ -234,19 +195,9 @@ def export_models(names=None, decimate=0.45, write=True):
         r = model.build(spec, decimate=decimate)
         src = [o for o in bpy.data.collections['CAR_' + name].objects if o.type == 'MESH']
         bm, mats = _gather(src, name)
-        g0 = _split(bm, mats, atlas, M_out, f'{name}_0', coll)
+        groups = _split(bm, mats, atlas, M_out, name, coll)
         bm.free()
-        lw = low_wheels(spec, M, bpy.data.collections['CAR_' + name])
-        src1 = [o for o in src if not any(o.name.endswith(k) for k in LOD1_SKIP) and '_wheel' not in o.name] + lw
-        bm, mats = _gather(src1, name)
-        g1 = _split(bm, mats, atlas, M_out, f'{name}_1', coll)
-        bm.free()
-        for g, ob in g1.items():
-            _decimate_to(ob, LOD1_TRIS[g] + (300 if g == 'opaque' else 0))
-        for o in lw:
-            bpy.data.objects.remove(o)
-        stats[name] = {f'{lod}_{g}': sum(len(p.vertices) - 2 for p in ob.data.polygons)
-                       for lod, gs in (('0', g0), ('1', g1)) for g, ob in gs.items()}
+        stats[name] = {g: sum(len(p.vertices) - 2 for p in ob.data.polygons) for g, ob in groups.items()}
     atlas.images()
     if write:
         export_glb(coll)

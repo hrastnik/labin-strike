@@ -847,7 +847,6 @@ function frame () {
     tanks?.update(dt, avatars.renderTime(INTERP_DELAY), (pos) => effects.smoke(pos))
   }
   grenades?.update(dt, (pos, impact) => audio.nadeBounce(pos, Math.min(1, impact / 10)))
-  cars?.update(camera.position, dt)
   renderer.clear()
   renderer.render(scene, camera)
   if (G.state === 'playing' && player?.alive && !G.driving) viewmodel.render(renderer, 58 - (BASE_FOV - fovCurrent) * 0.35, scene, camera)
