@@ -1185,10 +1185,10 @@ function updateSpectating (dt, now) {
 function updateKillcam (dt, now) {
   const k = G.killcam
   if (!k) return false
-  if (player.alive || G.match.state !== 'playing') { endKillcam(); return false }
+  if ((player.alive && !k.test) || G.match.state !== 'playing') { endKillcam(); return false }
   if (input.locked && !loadoutMenu.isOpen && (input.wasPressed('Space') || input.mouse.leftPressed)) { skipKillcam(now); return false }
   if (!killcam.active) {
-    if (now - player.deathAt < KILLCAM.delay * 1000) return false
+    if (now - (k.test ? k.since : player.deathAt) < KILLCAM.delay * 1000) return false
     if (!killcam.start({ killer: k.killer, victim: G.myId, at: k.at, roster: k.roster })) { skipKillcam(now); return false }
     avatars.hidden = grenades.hidden = true
   }
@@ -1275,7 +1275,9 @@ function moveOnFoot (dt, now, canAct, acting, watching, replaying) {
 
   // camera
   const ws = weapons
-  if (player.alive) {
+  if (replaying) {
+    // the kill-cam has placed the camera
+  } else if (player.alive) {
     player.eyePos(camera.position)
     camera.rotation.set(player.pitch + ws.punch.pitch, player.yaw + ws.punch.yaw, -player.lean * LEAN_ROLL)
     if (G.shake > 0.001) {
@@ -1283,8 +1285,6 @@ function moveOnFoot (dt, now, canAct, acting, watching, replaying) {
       camera.rotation.y += (Math.random() - 0.5) * 0.06 * G.shake
     }
     deathRoll = 0
-  } else if (replaying) {
-    // the kill-cam has placed the camera
   } else if (watching) {
     watchTeammates(dt, now)
   } else if (player.deathPos) {
@@ -1592,6 +1592,30 @@ window.__labin = {
     player.yaw = Math.atan2(-(x - e.x), -(z - e.z))
     player.pitch = Math.atan2(y - e.y, Math.hypot(x - e.x, z - e.z))
   },
+  // test helper: the kill-cam's state, and (with trace on) one row per replayed frame
+  // test helper: replay the latest recorded kill (n: how many kills back) as if it were our own death
+  replayKill: (n = 0) => {
+    const kills = killcam.events.filter((e) => e.type === 'kill' && e.d.k && e.d.k !== e.d.v)
+    const e = kills[kills.length - 1 - n]
+    if (!e) return null
+    G.killcam = { killer: e.d.k, at: e.t, roster: new Map(G.roster), w: e.d.w, hs: e.d.hs, test: true, since: performance.now() - KILLCAM.delay * 1000 }
+    return { killer: e.d.k, victim: e.d.v, at: e.t, w: e.d.w }
+  },
+  killcam: () => ({
+    rt: avatars.renderTime(INTERP_DELAY),
+    pending: G.killcam && { killer: G.killcam.killer, at: G.killcam.at },
+    active: killcam.active,
+    time: killcam.time,
+    at: killcam.at,
+    scale: killcam.scale,
+    firstPerson: killcam.firstPerson,
+    snaps: killcam.snaps.length,
+    span: killcam.snaps.length ? [killcam.snaps[0].t, killcam.snaps[killcam.snaps.length - 1].t] : null,
+    events: killcam.events.map((e) => ({ t: e.t, type: e.type, id: e.d.id ?? e.d.k })),
+    ghosts: [...killcam.ghosts.map.values()].map((a) => ({ id: a.id, alive: a.alive, visible: a.root.visible, pos: [a.pos.x, a.pos.y, a.pos.z].map(r2), yaw: r3(a.yaw), pitch: r3(a.pitch) })),
+    live: [...avatars.map.values()].map((a) => ({ id: a.id, alive: a.alive, visible: a.root.visible, pos: [a.pos.x, a.pos.y, a.pos.z].map(r2), yaw: r3(a.yaw), pitch: r3(a.pitch) })),
+    cam: [camera.position.x, camera.position.y, camera.position.z].map(r2)
+  }),
   state: () => ({
     state: G.state,
     spectating: G.spectating,
