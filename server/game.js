@@ -2,7 +2,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import RAPIER from '@dimforge/rapier3d-compat'
-import { TICK_RATE, SNAPSHOT_RATE, MATCH, PLAYER, BOT_NAMES } from '../shared/constants.js'
+import { TICK_RATE, SNAPSHOT_RATE, MATCH, PLAYER, BOT_NAMES, killcamLength } from '../shared/constants.js'
 import {
   WEAPONS, WEAPON_CODE, CLASS_IDS, CLASSES, GRENADE, KNIFE, AMMO_DROP, damageFor, blastDamage, canUse, sanitizeLoadout,
   isValidLoadout, startingAmmo, ammoPickup
@@ -26,6 +26,8 @@ const r2 = (v) => Math.round(v * 100) / 100
 const r3 = (v) => Math.round(v * 1000) / 1000
 // how far a human's stab may be from what the server sees, for the target having moved while the stab was in flight
 const KNIFE_SLACK = 1.2
+// ms from a death to the respawn when the kill-cam is watched to the end (a little slack for the kill message's trip)
+const KILLCAM_RESPAWN = Math.round(killcamLength() * 1000) + 250
 
 export class Game {
   constructor (io, root) {
@@ -107,6 +109,7 @@ export class Game {
     channel.on('bots', (data) => { const p = channel.player; if (p) this.handleBots(p, data) })
     channel.on('mode', (data) => { const p = channel.player; if (p) this.handleMode(p, data) })
     channel.on('use', (data) => { const p = channel.player; if (p) this.sd?.use(p, data?.on) })
+    channel.on('skip', () => { const p = channel.player; if (p) this.skipKillcam(p) })
     channel.on('tanks', (data) => { const p = channel.player; if (p) this.handleTanks(p, data) })
     channel.on('tank', (data) => { const p = channel.player; if (p) data?.on ? this.tanks.enter(p) : this.tanks.exit(p) })
     channel.on('tk', (data) => { const p = channel.player; if (p) this.tanks.state(p, data) })
@@ -275,6 +278,7 @@ export class Game {
       alive: false,
       life: 0,
       respawnAt: 0,
+      diedAt: 0,
       lastDamageAt: -1e9,
       protectUntil: 0,
       kills: 0,
@@ -712,7 +716,10 @@ export class Game {
     if (victim.bike) this.bikes.eject(victim.bike)
     victim.hp = 0
     victim.deaths++
-    victim.respawnAt = this.now() + MATCH.respawnDelay * 1000
+    victim.diedAt = this.now()
+    // a human killed by an enemy watches the kill-cam first (Search and Destroy keeps the fallen out anyway)
+    const killcam = !victim.isBot && attacker && attacker !== victim && attacker.team !== victim.team
+    victim.respawnAt = victim.diedAt + (killcam ? KILLCAM_RESPAWN : MATCH.respawnDelay * 1000)
     if (attacker && attacker !== victim && attacker.team !== victim.team) {
       attacker.kills++
       if (!this.sd) this.match.scores[attacker.team]++
@@ -722,6 +729,12 @@ export class Game {
     if (victim.cookAt) this.dropCooked(victim)
     if (!this.sd && this.match.scores[attacker?.team] >= MATCH.scoreLimit) this.endMatch(attacker.team)
     else this.broadcastRoster()
+  }
+
+  // the client skipped the kill-cam (or could not show it): back in as soon as the usual delay allows
+  skipKillcam (p) {
+    if (p.alive || !p.respawnAt) return
+    p.respawnAt = Math.min(p.respawnAt, Math.max(this.now(), p.diedAt + MATCH.respawnDelay * 1000))
   }
 
   // ------------------------------------------------------------------ ammo drops

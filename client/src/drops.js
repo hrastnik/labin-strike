@@ -6,7 +6,7 @@ const BLINK = 5 // seconds left on the ground when the can starts blinking
 export class Drops {
   constructor (scene) {
     this.scene = scene
-    this.live = new Map() // drop id -> { mesh, expireAt }
+    this.live = new Map() // drop id -> { mesh, expireAt, at }
     this.templates = {}
     for (const team of ['allies', 'axis']) {
       const t = buildAmmoCan(team)
@@ -15,14 +15,14 @@ export class Drops {
     }
   }
 
-  // { i: id, p: ground position, t: team of the fallen soldier, ttl: ms until it despawns }
-  add ({ i, p, t, ttl }) {
+  // { i: id, p: ground position, t: team of the fallen soldier, ttl: ms until it despawns }; at: server ms it landed
+  add ({ i, p, t, ttl }, at = 0) {
     this.remove(i)
     const mesh = (this.templates[t] || this.templates.allies).clone()
     mesh.position.set(p[0], p[1], p[2])
     mesh.rotation.set(0, Math.random() * Math.PI * 2, (Math.random() - 0.5) * 0.08)
     this.scene.add(mesh)
-    this.live.set(i, { mesh, expireAt: performance.now() + ttl })
+    this.live.set(i, { mesh, expireAt: performance.now() + ttl, at })
   }
 
   remove (i) {
@@ -34,13 +34,14 @@ export class Drops {
 
   clear () { for (const i of [...this.live.keys()]) this.remove(i) }
 
-  update () {
+  // past: the kill-cam's server ms, before which the cans that landed later are not there yet
+  update (past = null) {
     const now = performance.now()
     for (const [i, d] of this.live) {
       const left = (d.expireAt - now) / 1000
       if (left < -2) { this.remove(i); continue } // the server's removal never reached us
       // blinks faster as it runs out
-      d.mesh.visible = left > BLINK || Math.floor(now / (left > 2 ? 250 : 120)) % 2 === 0
+      d.mesh.visible = (past == null || d.at <= past) && (left > BLINK || Math.floor(now / (left > 2 ? 250 : 120)) % 2 === 0)
     }
   }
 }

@@ -2,7 +2,7 @@
 import './style.css'
 import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
-import { PLAYER, INPUT_RATE, INTERP_DELAY, MATCH, TEAMS } from '@shared/constants.js'
+import { PLAYER, INPUT_RATE, INTERP_DELAY, MATCH, TEAMS, KILLCAM, killcamLength } from '@shared/constants.js'
 import { WEAPONS, WEAPON_LIST, CLASSES, GRENADE, KNIFE, sanitizeLoadout } from '@shared/weapons.js'
 import { MODES, SD, SD_SITES, otherTeam, sdSiteAt } from '@shared/modes.js'
 import { parseGlbJson, extractMapData } from '@shared/mapdata.js'
@@ -27,10 +27,11 @@ import { Grenades } from './grenades.js'
 import { Drops } from './drops.js'
 import { Bomb } from './bomb.js'
 import { Audio } from './audio.js'
-import { Hud } from './hud.js'
+import { Hud, weaponLabel } from './hud.js'
 import { Net } from './net.js'
 import { LoadoutMenu } from './loadout.js'
 import { Spectator } from './spectate.js'
+import { Killcam } from './killcam.js'
 
 const BASE_FOV = 68
 const LEAN_ROLL = 0.18 // camera roll at a full lean, radians
@@ -72,6 +73,7 @@ const G = {
   driving: null, // the tank we are in (tanks.js state), confirmed by the server
   tankReadyAt: 0, // performance.now() when its gun is loaded
   riding: null, // the motorcycle we are on (bikes.js state), confirmed by the server
+  killcam: null, // our death to replay: { killer, at (server ms), roster, w, hs }, until it has played or been skipped
   tps: 0, // server position corrections received
   trace: null // test helper: per-frame [t, camX, camY, camZ]
 }
@@ -108,6 +110,17 @@ let cats = null
 let tanks = null
 let bikes = null
 const spec = new Spectator(camera, viewmodel, (o, d, len) => rayMap(RAPIER, world, o, d, len), BASE_FOV)
+const killcam = new Killcam({
+  scene,
+  camera,
+  viewmodel,
+  ray: (o, d, len) => rayMap(RAPIER, world, o, d, len),
+  baseFov: BASE_FOV,
+  play: (type, d) => SHOW[type]?.(d, true),
+  makeGrenades: () => new Grenades(scene, RAPIER, world)
+})
+// server ms now (the clock the snapshots are on)
+const serverNow = () => avatars.renderTime(0)
 
 function resize () {
   const w = window.innerWidth; const h = window.innerHeight
@@ -291,6 +304,8 @@ function leave (msg) {
   G.deployed = false
   G.spectating = false
   spec.reset()
+  endKillcam()
+  killcam.clear()
   hud.spectate(null)
   setPauseMode()
   net.close()
@@ -347,6 +362,7 @@ net.on('welcome', (d) => {
   if (d.team) store.set('lastTeam', d.team)
   if (player) { player.life = 0; player.alive = false; player.deathPos = null }
   stopDriving()
+  endKillcam()
   avatars.clear() // name tags and friend / foe depend on our side, or having none
   spec.reset()
   setRoster(d.roster, d.match)
@@ -378,6 +394,7 @@ net.on('spawn', (d) => onSpawn(d))
 
 function onSpawn (d) {
   if (!player || d.life <= player.life) return
+  endKillcam()
   player.spawn(d.pos, d.yaw, d.life)
   player.deathPos = null
   stopDriving()
@@ -425,6 +442,7 @@ net.on('team', (d) => {
   store.set('lastTeam', d.team)
   if (player) { player.alive = false; player.deathPos = null }
   stopDriving()
+  endKillcam()
   input.mouse.left = false
   avatars.clear() // everyone's friend / foe status flipped
   viewmodel.setTeam(d.team)
@@ -496,6 +514,7 @@ function stopDriving () {
 net.on('snap', (s) => {
   if (G.state !== 'playing') return
   avatars.onSnapshot(s, G.myId, G.roster, G.team)
+  killcam.snapshot(s)
   cats?.onSnapshot(s.t, s.c)
   tanks?.onSnapshot(s.t, s.k)
   bikes?.onSnapshot(s.t, s.b)
@@ -554,8 +573,7 @@ net.on('bomb', (d) => {
   } else if (d.e === 'boom') {
     bomb.remove()
     const pos = new THREE.Vector3(...d.p)
-    const below = rayMap(RAPIER, world, [pos.x, pos.y + 0.2, pos.z], [0, -1, 0], 0.8)
-    const scorch = below && below.normal[1] > 0.5 ? { point: new THREE.Vector3(pos.x, pos.y + 0.2 - below.dist, pos.z), normal: below.normal } : null
+    const scorch = scorchBelow(pos)
     for (let i = 0; i < 3; i++) {
       const at = pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 3, 0.2 + i * 0.6, (Math.random() - 0.5) * 3))
       effects.explosion(at, i === 0 ? scorch : null)
@@ -566,105 +584,136 @@ net.on('bomb', (d) => {
   }
 })
 
-// a tank gun: the shooter's client already showed its own muzzle blast
-net.on('shell', (d) => {
-  if (G.state !== 'playing') return
-  const s = tanks?.get(d.id)
-  const o = new THREE.Vector3(...d.o)
-  const e = new THREE.Vector3(...d.e)
-  const dir = e.clone().sub(o).normalize()
-  const muzzle = o.clone().addScaledVector(dir, s ? tankSide(s.team).barrel : 2)
-  const ear = camera.position
-  if (s && s !== G.driving) {
-    s.firedAt = performance.now()
-    effects.gunBlast(muzzle, dir)
-    audio.cannon(muzzle, muzzle.distanceTo(ear))
-  }
-  effects.tracer(muzzle, e, 900)
-  const below = rayMap(RAPIER, world, [e.x, e.y + 0.2, e.z], [0, -1, 0], 0.8)
-  const scorch = below && below.normal[1] > 0.5 ? { point: new THREE.Vector3(e.x, e.y + 0.2 - below.dist, e.z), normal: below.normal } : null
-  effects.explosion(e.clone().addScaledVector(dir, -0.3), scorch)
-  const dist = e.distanceTo(ear)
-  audio.explosion(e, dist)
-  if (player.alive) G.shake = Math.max(G.shake, Math.max(0, 1 - dist / 35) ** 2)
-})
-
-net.on('bikeboom', (d) => {
-  if (G.state !== 'playing') return
-  const pos = new THREE.Vector3(...d.p)
-  for (let i = 0; i < 2; i++) effects.explosion(pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 1.2, 0.4 + i * 0.5, (Math.random() - 0.5) * 1.6)), null)
-  const dist = pos.distanceTo(camera.position)
-  audio.explosion(pos, dist)
-  if (player.alive) G.shake = Math.max(G.shake, Math.max(0, 1 - dist / 30) ** 2)
-})
-
-net.on('tankboom', (d) => {
-  if (G.state !== 'playing') return
-  const pos = new THREE.Vector3(...d.p)
-  for (let i = 0; i < 4; i++) {
-    effects.explosion(pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 3, 0.6 + i * 0.5, (Math.random() - 0.5) * 4)), null)
-  }
-  const dist = pos.distanceTo(camera.position)
-  audio.explosion(pos, dist)
-  if (player.alive) G.shake = Math.max(G.shake, Math.max(0, 1 - dist / 50) ** 2)
-})
-
-// our tank took a hit
-net.on('tdmg', (d) => {
-  const s = G.driving
-  if (!s) return
-  s.hp = d.hp
-  const ang = Math.atan2(-(d.from[0] - s.pos[0]), -(d.from[2] - s.pos[2])) - player.yaw
-  hud.damageFlash(-ang)
-  audio.click(260, 0.6, 0.09)
-})
-
-net.on('shot', (d) => {
-  if (G.state !== 'playing' || d.id === G.myId) return
-  const a = avatars.map.get(d.id)
-  a?.showFlash()
-  spec.onShot(d.id)
-  const o = new THREE.Vector3(...d.o)
-  const e = new THREE.Vector3(...d.e)
-  const myEye = player.eyePos(new THREE.Vector3())
-  audio.shot(d.w, o, o.distanceTo(earPos()))
-  effects.tracer(o.clone().addScaledVector(e.clone().sub(o).normalize(), 0.8), e, tracerSpeed(d.w) * 0.72)
-  // impact decal where the bullet stopped (if it stopped on map geometry)
-  const len = o.distanceTo(e)
-  if (len > 0.5 && d.n !== 0) {
-    const dir = e.clone().sub(o).divideScalar(len)
-    const h = rayMap(RAPIER, world, d.o, [dir.x, dir.y, dir.z], len + 0.3)
-    if (h && Math.abs(h.dist - len) < 0.6) effects.impact(o.clone().addScaledVector(dir, h.dist), h.normal)
-  }
-  // bullet passing close by
-  if (player.alive && a && a.team !== G.team) {
-    const seg = e.clone().sub(o)
-    const t = THREE.MathUtils.clamp(myEye.clone().sub(o).dot(seg) / seg.lengthSq(), 0, 1)
-    const closest = o.clone().addScaledVector(seg, t)
-    if (closest.distanceTo(myEye) < 1.6 && t > 0.05 && t < 0.98) audio.whiz(closest)
-  }
-})
-
-// our own throws are never echoed back, but a cooked grenade we dropped or held too long is
-net.on('nade', (d) => {
-  if (G.state !== 'playing' || !grenades) return
-  grenades.spawn(`${d.id}:${d.k}`, d.o, d.d, d.f)
-  if (d.d) spec.onNade(d.id)
-})
-
-net.on('boom', (d) => {
-  if (G.state !== 'playing' || !grenades) return
-  grenades.remove(`${d.id}:${d.k}`)
-  const pos = new THREE.Vector3(...d.p)
+// scorch mark for a blast at pos, if there is ground close below it
+function scorchBelow (pos) {
   const below = rayMap(RAPIER, world, [pos.x, pos.y + 0.2, pos.z], [0, -1, 0], 0.8)
-  const scorch = below && below.normal[1] > 0.5 ? { point: new THREE.Vector3(pos.x, pos.y + 0.2 - below.dist, pos.z), normal: below.normal } : null
-  effects.explosion(pos.clone().setY(pos.y + 0.15), scorch)
-  const dist = pos.distanceTo(earPos())
-  audio.explosion(pos, dist)
-  if (player.alive) G.shake = Math.max(G.shake, Math.max(0, 1 - dist / 30) ** 2)
-})
+  return below && below.normal[1] > 0.5 ? { point: new THREE.Vector3(pos.x, pos.y + 0.2 - below.dist, pos.z), normal: below.normal } : null
+}
 
-net.on('drop', (d) => { if (G.state === 'playing') drops.add(d) })
+// what the server tells everyone happened, shown live or (past) again by the kill-cam, on its own soldiers and
+// grenades: no shaking our camera, and no second bullet hole or scorch mark where the first one already is
+const SHOW = {
+  // a tank gun: the shooter's client already showed its own muzzle blast
+  shell (d, past) {
+    const s = tanks?.get(d.id)
+    const o = new THREE.Vector3(...d.o)
+    const e = new THREE.Vector3(...d.e)
+    const dir = e.clone().sub(o).normalize()
+    const muzzle = o.clone().addScaledVector(dir, s ? tankSide(s.team).barrel : 2)
+    const ear = camera.position
+    if (s && (past || s !== G.driving)) {
+      s.firedAt = performance.now()
+      effects.gunBlast(muzzle, dir)
+      audio.cannon(muzzle, muzzle.distanceTo(ear))
+    }
+    effects.tracer(muzzle, e, 900)
+    effects.explosion(e.clone().addScaledVector(dir, -0.3), past ? null : scorchBelow(e))
+    const dist = e.distanceTo(ear)
+    audio.explosion(e, dist)
+    if (!past && player.alive) G.shake = Math.max(G.shake, Math.max(0, 1 - dist / 35) ** 2)
+  },
+
+  bikeboom (d, past) {
+    const pos = new THREE.Vector3(...d.p)
+    for (let i = 0; i < 2; i++) effects.explosion(pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 1.2, 0.4 + i * 0.5, (Math.random() - 0.5) * 1.6)), null)
+    const dist = pos.distanceTo(camera.position)
+    audio.explosion(pos, dist)
+    if (!past && player.alive) G.shake = Math.max(G.shake, Math.max(0, 1 - dist / 30) ** 2)
+  },
+
+  tankboom (d, past) {
+    const pos = new THREE.Vector3(...d.p)
+    for (let i = 0; i < 4; i++) {
+      effects.explosion(pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 3, 0.6 + i * 0.5, (Math.random() - 0.5) * 4)), null)
+    }
+    const dist = pos.distanceTo(camera.position)
+    audio.explosion(pos, dist)
+    if (!past && player.alive) G.shake = Math.max(G.shake, Math.max(0, 1 - dist / 50) ** 2)
+  },
+
+  shot (d, past) {
+    const a = (past ? killcam.ghosts : avatars).map.get(d.id)
+    a?.showFlash()
+    const o = new THREE.Vector3(...d.o)
+    const e = new THREE.Vector3(...d.e)
+    const len = o.distanceTo(e)
+    const dir = e.clone().sub(o).divideScalar(len || 1)
+    let from = o.clone().addScaledVector(dir, 0.8)
+    if (!past) spec.onShot(d.id)
+    else if (killcam.onShot(d.id)) {
+      // through the killer's eyes: out of the muzzle of the rifle in their hands
+      viewmodel.muzzleWorld(camera, muzzle)
+      from = muzzle.clone()
+      effects.muzzle(muzzle)
+    }
+    audio.shot(d.w, o, o.distanceTo(earPos()))
+    effects.tracer(from, e, tracerSpeed(d.w) * 0.72)
+    // the replay knows where everyone stood: blood where the bullet stopped in someone
+    if (past && len > 0.5) {
+      for (const g of killcam.ghosts.map.values()) {
+        if (g.id === d.id || !g.exposed) continue
+        const h = rayVsPlayer(d.o, [dir.x, dir.y, dir.z], len + 0.3, g.pos.x, g.pos.y, g.pos.z, g.crouched, leanShift(g.yaw, g.lean))
+        if (h && Math.abs(h.t - len) < 0.6) { effects.blood(e, dir.clone().negate()); return }
+      }
+    }
+    // impact where the bullet stopped (if it stopped on map geometry)
+    if (len > 0.5 && d.n !== 0) {
+      const h = rayMap(RAPIER, world, d.o, [dir.x, dir.y, dir.z], len + 0.3)
+      if (h && Math.abs(h.dist - len) < 0.6) effects.impact(o.clone().addScaledVector(dir, h.dist), h.normal, 'world', !past)
+    }
+    // bullet passing close by
+    if (!past && player.alive && a && a.team !== G.team) {
+      const myEye = player.eyePos(new THREE.Vector3())
+      const seg = e.clone().sub(o)
+      const t = THREE.MathUtils.clamp(myEye.clone().sub(o).dot(seg) / seg.lengthSq(), 0, 1)
+      const closest = o.clone().addScaledVector(seg, t)
+      if (closest.distanceTo(myEye) < 1.6 && t > 0.05 && t < 0.98) audio.whiz(closest)
+    }
+  },
+
+  // our own throws are never echoed back, but a cooked grenade we dropped or held too long is
+  nade (d, past) {
+    (past ? killcam.grenades : grenades).spawn(`${d.id}:${d.k}`, d.o, d.d, d.f)
+    if (!d.d) return
+    if (past) killcam.onNade(d.id)
+    else spec.onNade(d.id)
+  },
+
+  boom (d, past) {
+    (past ? killcam.grenades : grenades).remove(`${d.id}:${d.k}`)
+    const pos = new THREE.Vector3(...d.p)
+    effects.explosion(pos.clone().setY(pos.y + 0.15), past ? null : scorchBelow(pos))
+    const dist = pos.distanceTo(earPos())
+    audio.explosion(pos, dist)
+    if (!past && player.alive) G.shake = Math.max(G.shake, Math.max(0, 1 - dist / 30) ** 2)
+  },
+
+  stab (d, past) {
+    const a = (past ? killcam.ghosts : avatars).map.get(d.id)
+    if (!a?.alive) return
+    a.stab()
+    if (past) killcam.onStab(d.id)
+    else spec.onStab(d.id)
+    audio.knifeSwing(a.pos.clone().setY(a.pos.y + 1.2))
+  }
+}
+
+// while the kill-cam plays, the present goes on unseen and unheard: only what must still be right afterwards
+const KEEP = {
+  nade: (d) => grenades.spawn(`${d.id}:${d.k}`, d.o, d.d, d.f),
+  boom: (d) => grenades.remove(`${d.id}:${d.k}`)
+}
+
+for (const type of Object.keys(SHOW)) {
+  net.on(type, (d) => {
+    if (G.state !== 'playing' || (type === 'shot' && d.id === G.myId)) return
+    killcam.record(type, d, serverNow())
+    if (!killcam.active) SHOW[type](d, false)
+    else KEEP[type]?.(d)
+  })
+}
+
+net.on('drop', (d) => { if (G.state === 'playing') drops.add(d, serverNow()) })
 net.on('undrop', (d) => drops.remove(d.i))
 
 net.on('ammo', (d) => {
@@ -672,15 +721,6 @@ net.on('ammo', (d) => {
   weapons.addAmmo(d.a)
   hud.pickup(d.a)
   audio.pickup()
-})
-
-net.on('stab', (d) => {
-  if (G.state !== 'playing') return
-  const a = avatars.map.get(d.id)
-  if (!a?.alive) return
-  a.stab()
-  spec.onStab(d.id)
-  audio.knifeSwing(a.pos.clone().setY(a.pos.y + 1.2))
 })
 
 net.on('dmg', (d) => {
@@ -703,6 +743,7 @@ net.on('hit', (d) => {
 })
 
 net.on('kill', (d) => {
+  killcam.record('kill', d, serverNow())
   const killer = G.roster.get(d.k)
   const victim = G.roster.get(d.v)
   hud.killfeed(killer, victim, d.w, d.hs, G.myId)
@@ -713,8 +754,14 @@ net.on('kill', (d) => {
     player.alive = false
     player.hp = 0
     player.deathAt = performance.now()
-    G.respawnAt = performance.now() + MATCH.respawnDelay * 1000
     G.killerName = killer && killer.id !== G.myId ? killer.name : ''
+    // at an enemy's hands: the kill-cam, after which the server respawns us (or as soon as we skip it)
+    endKillcam()
+    G.killcam = killer && killer.id !== G.myId && killer.team !== G.team && G.match.state === 'playing'
+      ? { killer: killer.id, at: serverNow(), roster: new Map(G.roster), w: d.w, hs: d.hs }
+      : null
+    if (!G.killcam) net.emit('skip', {}, true)
+    G.respawnAt = player.deathAt + (G.killcam ? killcamLength() : MATCH.respawnDelay) * 1000
     input.mouse.left = false
     G.act = null
   } else if (d.k === G.myId && victim) {
@@ -803,7 +850,12 @@ function fireShot (spread) {
   else if (!ph && bh) { if (bh.bike.team !== G.team) msg.hit = { bike: bh.bike.id } }
   else if (!ph && th && th.tank.team !== G.team) msg.hit = { tank: th.tank.id }
   net.emit('fire', msg)
+  recordOwn('shot', { id: G.myId, w: msg.w, o: msg.o, e: msg.e })
 }
+
+// our own shots, throws and stabs are not echoed back: the kill-cam keeps them itself, on the timeline our position
+// reaches the snapshots on (stamped when the server got it, about a round trip later than our clock says now)
+function recordOwn (type, d) { killcam.record(type, d, serverNow() + G.myPing) }
 const r2 = (v) => Math.round(v * 100) / 100
 const r3 = (v) => Math.round(v * 1000) / 1000
 
@@ -819,6 +871,7 @@ function throwGrenade () {
   const k = G.cookK
   grenades.spawn(`${G.myId}:${k}`, o, d, GRENADE.fuse * 1000 - (performance.now() - G.cookAt))
   net.emit('nade', { o, d, k }, true)
+  recordOwn('nade', { id: G.myId, k, o, d, f: GRENADE.fuse * 1000 - (performance.now() - G.cookAt) })
   audio.nadeThrow()
 }
 
@@ -845,6 +898,7 @@ function knifeStrike () {
     audio.knifeHit()
   }
   net.emit('knife', msg, true)
+  recordOwn('stab', { id: G.myId })
 }
 
 // what's under the crosshair (for name display / crosshair colour)
@@ -945,20 +999,24 @@ function frame () {
     if (G.state === 'playing') avatars.update(dt, INTERP_DELAY)
   }
 
-  effects.update(dt)
-  drops.update()
+  // the kill-cam poses the tanks, bikes and cats as they were, and slows the world down around the kill
+  const past = killcam.active
+  const wdt = dt * killcam.scale
+  effects.update(wdt)
+  drops.update(past ? killcam.time : null)
   bomb.update()
   if (G.state === 'playing') {
-    cats?.update(dt, avatars.renderTime(INTERP_DELAY), camera.position)
-    tanks?.update(dt, avatars.renderTime(INTERP_DELAY), (pos) => effects.smoke(pos))
-    bikes?.update(dt, avatars.renderTime(INTERP_DELAY), (pos) => effects.smoke(pos))
+    const t = past ? killcam.time : avatars.renderTime(INTERP_DELAY)
+    cats?.update(wdt, t, camera.position)
+    tanks?.update(wdt, t, (pos) => effects.smoke(pos), past)
+    bikes?.update(wdt, t, (pos) => effects.smoke(pos), past)
   }
   grenades?.update(dt, (pos, impact) => audio.nadeBounce(pos, Math.min(1, impact / 10)))
   camera.updateMatrixWorld()
   cars?.cull(camera)
   renderer.clear()
   renderer.render(scene, camera)
-  if (G.state === 'playing' && ((player?.alive && !G.driving && !G.riding) || spec.firstPerson)) viewmodel.render(renderer, 58 - (BASE_FOV - fovCurrent) * 0.35, scene, camera)
+  if (G.state === 'playing' && ((player?.alive && !G.driving && !G.riding) || spec.firstPerson || killcam.firstPerson)) viewmodel.render(renderer, 58 - (BASE_FOV - fovCurrent) * 0.35, scene, camera)
   if (G.trace) G.trace.push([now, camera.position.x, camera.position.y, camera.position.z])
   input.endFrame()
 }
@@ -990,8 +1048,11 @@ function updateGame (dt, now) {
 
   const canAct = player.alive && locked && G.match.state === 'playing' && !loadoutMenu.isOpen
   const sd = G.match.mode === 'sd'
-  // Search and Destroy keeps the fallen out until the next round: after a moment they watch their own side
-  const watching = sd && !player.alive && !G.driving && !G.riding && (!player.deathPos || now - player.deathAt > 3000)
+  // remote players (before the camera, which may be following one of them)
+  avatars.update(dt, INTERP_DELAY)
+  const replaying = updateKillcam(dt, now)
+  // Search and Destroy keeps the fallen out until the next round: after a moment (and the kill-cam) they watch their own side
+  const watching = sd && !player.alive && !G.driving && !G.riding && !G.killcam && (!player.deathPos || now - player.deathAt > 3000)
   // Search and Destroy: hold F to plant or defuse; the server decides whether it counts, and we hold still meanwhile
   const sdLive = sd && G.match.roundState === 'live'
   const acting = !!G.act
@@ -1007,13 +1068,10 @@ function updateGame (dt, now) {
   const wantUse = canAct && !mounted && !board && !mount && sdLive && input.down('KeyF')
   if (wantUse !== G.useHeld) { G.useHeld = wantUse; net.emit('use', { on: wantUse }, true) }
 
-  // remote players (before the camera, which may be following one of them)
-  avatars.update(dt, INTERP_DELAY)
-
   if (G.driving) driveTank(dt, now, G.driving, canAct)
   else if (G.riding) rideBike(dt, now, G.riding)
-  else moveOnFoot(dt, now, canAct, acting, watching)
-  if (!watching) hud.spectate(null)
+  else moveOnFoot(dt, now, canAct, acting, watching, replaying)
+  if (!watching && !replaying) hud.spectate(null)
 
   // audio listener
   const fwd = camera.getWorldDirection(tmpV)
@@ -1024,15 +1082,15 @@ function updateGame (dt, now) {
   if (sd) {
     // between rounds the result banner takes the centre of the screen; once watching, the spectator bar says it
     const title = player.deathPos ? 'You were killed' : 'Round in progress'
-    hud.death(!watching && !player.alive && G.match.state === 'playing' && G.match.roundState === 'live', player.deathPos ? G.killerName : '', 0, next, title, 'You join in at the start of the next round')
+    hud.death(!watching && !replaying && !player.alive && G.match.state === 'playing' && G.match.roundState === 'live', player.deathPos ? G.killerName : '', 0, next, title, 'You join in at the start of the next round')
   } else {
-    hud.death(!player.alive && player.deathPos && G.match.state === 'playing', G.killerName, (G.respawnAt - now) / 1000, next)
+    hud.death(!replaying && !player.alive && player.deathPos && G.match.state === 'playing', G.killerName, (G.respawnAt - now) / 1000, next)
   }
   const prompt = board ? `Press <kbd>F</kbd> to drive the ${tankSide(board.team).name}` : mount ? `Press <kbd>F</kbd> to ride the ${bikeSide(mount.team).name}` : ''
   const sites = updateObjectives(now, sdLive, acting, prompt)
   hud.scoreboard(input.down('Tab') || G.match.state === 'ended', G.roster, G.match, G.myId, G.aliveIds)
   hud.netstat(G.myPing, G.fps)
-  const centre = watching ? camera.position : player.pos
+  const centre = watching || replaying ? camera.position : player.pos
   hud.compass(centre, player.alive ? player.yaw : camera.rotation.y, compassMarks(now, G.team, false), sites)
 }
 
@@ -1120,7 +1178,50 @@ function updateSpectating (dt, now) {
   hud.compass(camera.position, camera.rotation.y, compassMarks(now, team ?? 'allies', true), sites)
 }
 
-function moveOnFoot (dt, now, canAct, acting, watching) {
+// ------------------------------------------------------------------ kill-cam
+
+// our death through the killer's eyes, after a moment on the ground; true while it holds the camera.
+// Space or a click skips it, and with it the wait for the respawn beyond the usual delay
+function updateKillcam (dt, now) {
+  const k = G.killcam
+  if (!k) return false
+  if (player.alive || G.match.state !== 'playing') { endKillcam(); return false }
+  if (input.locked && !loadoutMenu.isOpen && (input.wasPressed('Space') || input.mouse.leftPressed)) { skipKillcam(now); return false }
+  if (!killcam.active) {
+    if (now - player.deathAt < KILLCAM.delay * 1000) return false
+    if (!killcam.start({ killer: k.killer, victim: G.myId, at: k.at, roster: k.roster })) { skipKillcam(now); return false }
+    avatars.hidden = grenades.hidden = true
+  }
+  const view = killcam.update({ tanks, dt, bounce: (pos, impact) => audio.nadeBounce(pos, Math.min(1, impact / 10)) })
+  if (!view) { endKillcam(); return false }
+  watchCamera(view)
+  hud.killcam({ progress: killcam.progress })
+  const how = `Killed you with ${weaponLabel(k.w, view.target.team)}${k.hs ? ' · headshot' : ''}`
+  hud.spectate({ ...watchInfo(view), sub: how, keys: '<kbd>Space</kbd> skip' })
+  return true
+}
+
+function skipKillcam (now) {
+  if (G.match.mode !== 'sd') {
+    net.emit('skip', {}, true)
+    G.respawnAt = Math.max(now, player.deathAt + MATCH.respawnDelay * 1000)
+  }
+  endKillcam()
+}
+
+function endKillcam () {
+  if (!G.killcam && !killcam.active) return
+  G.killcam = null
+  killcam.stop()
+  avatars.hidden = false
+  if (grenades) grenades.hidden = false
+  if (G.team) viewmodel.setTeam(G.team)
+  hud.killcam(null)
+  hud.spectate(null)
+  hud.scope(false)
+}
+
+function moveOnFoot (dt, now, canAct, acting, watching, replaying) {
   hud.tankGun(null)
   hud.gunSight(null)
   audio.engine(0)
@@ -1182,6 +1283,8 @@ function moveOnFoot (dt, now, canAct, acting, watching) {
       camera.rotation.y += (Math.random() - 0.5) * 0.06 * G.shake
     }
     deathRoll = 0
+  } else if (replaying) {
+    // the kill-cam has placed the camera
   } else if (watching) {
     watchTeammates(dt, now)
   } else if (player.deathPos) {
@@ -1196,7 +1299,7 @@ function moveOnFoot (dt, now, canAct, acting, watching) {
   }
   G.shake *= Math.exp(-dt * 4)
   const targetFov = BASE_FOV + (ws.def.adsFov - BASE_FOV) * ws.adsT
-  if (!watching && Math.abs(targetFov - fovCurrent) > 0.01) {
+  if (!watching && !replaying && Math.abs(targetFov - fovCurrent) > 0.01) {
     fovCurrent = targetFov
     camera.fov = fovCurrent
     camera.updateProjectionMatrix()
@@ -1238,7 +1341,7 @@ function moveOnFoot (dt, now, canAct, acting, watching) {
   }
 
   // viewmodel (hidden behind the scope overlay when a scoped rifle is fully raised); the spectator camera poses its own
-  if (!watching) updateViewmodel(dt, ws)
+  if (!watching && !replaying) updateViewmodel(dt, ws)
 
   hud.health(player.hp, player.alive)
   hud.weapon(ws)

@@ -10,6 +10,7 @@ export class Grenades {
     this.R = RAPIER
     this.world = world
     this.live = new Map() // `${thrower id}:${throw number}` -> grenade
+    this.hidden = false // still flying, but neither drawn nor heard (while the kill-cam shows its own)
     this.template = buildGrenade()
     this.template.traverse((o) => { if (o.isMesh) o.castShadow = true })
   }
@@ -21,10 +22,10 @@ export class Grenades {
     mesh.rotation.order = 'YXZ'
     mesh.rotation.y = dir ? Math.atan2(-dir[0], -dir[2]) : Math.random() * Math.PI * 2
     mesh.position.set(...origin)
-    mesh.visible = !dir
+    mesh.visible = !dir && !this.hidden
     this.scene.add(mesh)
     const g = createGrenade(origin, dir)
-    this.live.set(key, { ...g, origin, prev: origin.slice(), acc: 0, mesh, expireAt: performance.now() + fuse + 2000 })
+    this.live.set(key, { ...g, origin, prev: origin.slice(), acc: 0, mesh, shown: !dir, expireAt: performance.now() + fuse + 2000 })
   }
 
   // returns the last simulated position, or null if the grenade was not known here
@@ -48,10 +49,11 @@ export class Grenades {
         g.acc -= NADE_DT
         g.prev[0] = g.pos[0]; g.prev[1] = g.pos[1]; g.prev[2] = g.pos[2]
         const impact = stepGrenade(this.R, this.world, g)
-        if (impact > 1.5) onBounce?.(new THREE.Vector3(...g.pos), impact)
+        if (impact > 1.5 && !this.hidden) onBounce?.(new THREE.Vector3(...g.pos), impact)
       }
       // it leaves from the thrower's eye: keep it hidden until it is out of their face
-      g.mesh.visible ||= Math.hypot(g.pos[0] - g.origin[0], g.pos[1] - g.origin[1], g.pos[2] - g.origin[2]) > 1
+      g.shown ||= Math.hypot(g.pos[0] - g.origin[0], g.pos[1] - g.origin[1], g.pos[2] - g.origin[2]) > 1
+      g.mesh.visible = g.shown && !this.hidden
       const a = g.acc / NADE_DT
       g.mesh.position.set(g.prev[0] + (g.pos[0] - g.prev[0]) * a, g.prev[1] + (g.pos[1] - g.prev[1]) * a, g.prev[2] + (g.pos[2] - g.prev[2]) * a)
       // tumble end over end in flight, lie on its side once it settles

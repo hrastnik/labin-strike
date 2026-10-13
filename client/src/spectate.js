@@ -98,7 +98,12 @@ export class Spectator {
     if (!a) return canFree ? this.fly(ctx) : null // until someone is out there to follow
     this.fallenAt = 0
     if (a.tag) a.tag.visible = false
+    return this.watch(a, ctx)
+  }
 
+  // camera on soldier a: behind their tank, over their shoulder or through their eyes. ctx: { tanks, dt, now }
+  watch (a, ctx) {
+    this.firstPerson = false
     const tank = a.inTank ? [...(ctx.tanks?.map.values() ?? [])].find((t) => t.driver === a.id) : null
     if (tank) return this.chaseTank(a, tank)
     const eye = PLAYER.eye + (PLAYER.crouchEye - PLAYER.eye) * a.crouch
@@ -232,13 +237,13 @@ export class Spectator {
     return { fov: this.baseFov + (w.adsFov - this.baseFov) * s.adsT, scoped }
   }
 
-  // what the followed soldier did, from the server's messages
-  onShot (id) {
+  // what the followed soldier did, from the server's messages (at: on the clock update() is given as ctx.now)
+  onShot (id, at = performance.now()) {
     if (!this.firstPerson || id !== this.targetId || !this.vm) return
-    this.vm.shotAt = performance.now()
+    this.vm.shotAt = at
     this.viewmodel.fire()
   }
 
-  onStab (id) { if (this.vm && id === this.targetId) this.vm.stabAt = performance.now() }
-  onNade (id) { if (this.vm && id === this.targetId) this.vm.nadeAt = performance.now() }
+  onStab (id, at = performance.now()) { if (this.vm && id === this.targetId) this.vm.stabAt = at }
+  onNade (id, at = performance.now()) { if (this.vm && id === this.targetId) this.vm.nadeAt = at }
 }

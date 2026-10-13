@@ -8,6 +8,7 @@ import { PLAYER } from '@shared/constants.js'
 import { BIKE, BikeBody, bikeTeam, rayVsBike, bikeDistance, bikeBox } from '@shared/bikes.js'
 import { wrapAngle } from '@shared/tanks.js'
 import { Avatar } from './avatars.js'
+import { HISTORY } from './killcam.js'
 
 const MODELS = { allies: 'wla', axis: 'r35' } // node name prefixes in bikes.glb
 const WRECK = new THREE.Color(0.16, 0.15, 0.14)
@@ -141,8 +142,8 @@ export class Bikes {
       if (s.destroyed && !destroyed) s.buffer.length = 0
       const at = t - (e[9] || 0)
       const b = s.buffer
-      if (!b.length || at > b[b.length - 1].t) b.push({ t: at, x: e[1], y: e[2], z: e[3], yaw: e[4], lean: e[5] })
-      if (b.length > 30) b.splice(0, b.length - 30)
+      if (!b.length || at > b[b.length - 1].t) b.push({ t: at, x: e[1], y: e[2], z: e[3], yaw: e[4], lean: e[5], driver: e[7], destroyed })
+      while (b.length > 2 && b[0].t < at - HISTORY) b.shift() // the kill-cam replays the last few seconds
       s.hp = e[6]
       s.driver = e[7]
       s.destroyed = destroyed
@@ -162,8 +163,9 @@ export class Bikes {
   clear () { for (const [id, s] of this.map) this.remove(id, s) }
 
   // the bike we ride is posed by our own BikeBody; the others are interpolated at renderT (server ms).
-  // smoke(pos): called for each puff a wreck gives off
-  update (dt, renderT, smoke) {
+  // smoke(pos): called for each puff a wreck gives off; past: renderT is the kill-cam's, so who rides and whether it
+  // is a wreck come from then too (the next snapshot puts them back)
+  update (dt, renderT, smoke, past = false) {
     for (const s of this.map.values()) {
       const yaw0 = s.yaw; const x0 = s.pos[0]; const z0 = s.pos[2]
       if (s === this.mine) {
@@ -173,6 +175,11 @@ export class Bikes {
         s.lean = s.body.lean
       } else if (sample(s, renderT)) {
         s.body.setPose(s.pos[0], s.pos[1], s.pos[2], s.yaw)
+        if (past) {
+          s.driver = s.then.driver
+          s.destroyed = s.then.destroyed
+          s.view.wreck(s.destroyed)
+        }
       }
       if (dt > 0) {
         const along = ((s.pos[0] - x0) * -Math.sin(s.yaw) + (s.pos[2] - z0) * -Math.cos(s.yaw)) / dt
@@ -236,6 +243,7 @@ function sample (s, renderT) {
     }
   }
   const k = c.t > a.t ? Math.max(0, Math.min(1, (renderT - a.t) / (c.t - a.t))) : 0
+  s.then = k < 0.5 ? a : c
   s.pos = [a.x + (c.x - a.x) * k, a.y + (c.y - a.y) * k, a.z + (c.z - a.z) * k]
   s.yaw = a.yaw + wrapAngle(c.yaw - a.yaw) * k
   s.lean = a.lean + (c.lean - a.lean) * k

@@ -5,6 +5,7 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { PLAYER } from '@shared/constants.js'
 import { TANK, TankBody, tankSide, tankTeam, rayVsTank, tankDistance, underHull, wrapAngle } from '@shared/tanks.js'
+import { HISTORY } from './killcam.js'
 
 const SCALE = 0.36 // shared/tanks.js is measured at this scale
 const MODELS = { allies: '/assets/tanks/sherman.glb', axis: '/assets/tanks/panzer.glb' }
@@ -118,8 +119,8 @@ export class Tanks {
       }
       const at = t - (e[10] || 0)
       const b = s.buffer
-      if (!b.length || at > b[b.length - 1].t) b.push({ t: at, x: e[1], y: e[2], z: e[3], yaw: e[4], turret: e[5], gun: e[6] })
-      if (b.length > 30) b.splice(0, b.length - 30)
+      if (!b.length || at > b[b.length - 1].t) b.push({ t: at, x: e[1], y: e[2], z: e[3], yaw: e[4], turret: e[5], gun: e[6], driver: e[8], destroyed: !!(e[9] & 1) })
+      while (b.length > 2 && b[0].t < at - HISTORY) b.shift() // the kill-cam replays the last few seconds
       s.hp = e[7]
       s.driver = e[8]
       s.destroyed = !!(e[9] & 1)
@@ -139,8 +140,9 @@ export class Tanks {
   clear () { for (const [id, s] of this.map) this.remove(id, s) }
 
   // the tank we drive is posed by our own TankBody; the others are interpolated at renderT (server ms).
-  // smoke(pos): called for each puff a wreck gives off
-  update (dt, renderT, smoke) {
+  // smoke(pos): called for each puff a wreck gives off; past: renderT is the kill-cam's, so who drives and whether it
+  // is a wreck come from then too (the next snapshot puts them back)
+  update (dt, renderT, smoke, past = false) {
     for (const s of this.map.values()) {
       const yaw0 = s.yaw; const x0 = s.pos[0]; const z0 = s.pos[2]
       if (s === this.mine) {
@@ -149,6 +151,11 @@ export class Tanks {
         s.yaw = s.body.yaw
       } else if (sample(s, renderT)) {
         s.body.setPose(s.pos[0], s.pos[1], s.pos[2], s.yaw)
+        if (past) {
+          s.driver = s.then.driver
+          s.destroyed = s.then.destroyed
+          s.view.wreck(s.destroyed)
+        }
       }
       if (dt > 0) {
         const along = ((s.pos[0] - x0) * -Math.sin(s.yaw) + (s.pos[2] - z0) * -Math.cos(s.yaw)) / dt
@@ -210,6 +217,7 @@ function sample (s, renderT) {
     }
   }
   const k = c.t > a.t ? Math.max(0, Math.min(1, (renderT - a.t) / (c.t - a.t))) : 0
+  s.then = k < 0.5 ? a : c
   s.pos = [a.x + (c.x - a.x) * k, a.y + (c.y - a.y) * k, a.z + (c.z - a.z) * k]
   s.yaw = a.yaw + wrapAngle(c.yaw - a.yaw) * k
   s.turret = a.turret + wrapAngle(c.turret - a.turret) * k

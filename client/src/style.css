@@ -295,6 +295,17 @@ kbd { font-family: 'Oswald', sans-serif; font-size: 11px; color: var(--ink); bor
 /* watching someone else: our own health, weapon and crosshair have nothing to say */
 #hud.spectating #health, #hud.spectating #bottom-right, #hud.spectating #crosshair, #hud.spectating #vignette,
 #hud.spectating #damage-dirs, #hud.spectating #use-prompt, #hud.spectating #act { display: none; }
+/* ------------------------------------------------------------- kill-cam */
+#killcam .kc-bar { position: absolute; left: 0; right: 0; height: 11vh; min-height: 64px; background: rgba(8, 7, 5, 0.86); }
+#killcam .kc-bar.top { top: 0; display: flex; align-items: center; justify-content: center; }
+#killcam .kc-bar.bottom { bottom: 0; }
+#killcam .kc-title { font-family: 'Stardos Stencil', sans-serif; font-size: 34px; letter-spacing: 0.32em; color: var(--ink); display: flex; align-items: center; }
+#killcam .kc-title i { width: 12px; height: 12px; border-radius: 50%; background: var(--danger); margin-right: 16px; animation: blink 1s steps(2) infinite; }
+#kc-progress { position: absolute; left: 0; bottom: 0; height: 3px; width: 0; background: var(--accent); }
+/* the replay is the killer's: our scores, markers and minimap step aside for the letterbox */
+#hud.killcam #topbar, #hud.killcam #round-info, #hud.killcam #sd-markers, #hud.killcam #death, #hud.killcam #hitmarker,
+#hud.killcam #target-name, #hud.killcam #fuse, #hud.killcam #gun-mark, #hud.killcam .compass-wrap, #hud.killcam #notices { display: none; }
+#hud.killcam #spec { bottom: max(10px, calc(5.5vh - 34px)); }
 #scoreboard .sb-spec { margin-top: 12px; font-size: 14px; color: var(--ink-dim); letter-spacing: 0.06em; }
 #scoreboard .sb-spec b { font-weight: 400; color: var(--ink); }
 

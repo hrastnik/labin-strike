@@ -20,6 +20,38 @@ export const MATCH = {
   modeSwitchCooldown: 10 // seconds between one player's mode switches (each one restarts the match)
 }
 
+// a soldier killed by an enemy watches the last moments before their death through the killer's eyes, then respawns
+// (skipping it brings the respawn back to MATCH.respawnDelay after the death)
+export const KILLCAM = {
+  delay: 0.8, // seconds of the death camera before the replay starts
+  before: 3.5, // seconds of play replayed before the kill
+  after: 0.8, // and after it
+  slow: 0.3, // playback speed right around the kill
+  slowBefore: 0.3, // seconds of play before and after the kill played slowed down
+  slowAfter: 0.2,
+  ramp: 0.15 // seconds of play over which the speed eases into and out of the slow part
+}
+
+// playback speed at u seconds of play from the kill (negative: before it)
+export function killcamSpeed (u) {
+  const k = KILLCAM
+  const out = u < -k.slowBefore ? -k.slowBefore - u : u > k.slowAfter ? u - k.slowAfter : 0
+  const e = Math.min(1, out / k.ramp)
+  return k.slow + (1 - k.slow) * e * e * (3 - 2 * e)
+}
+
+let killcamSecs = 0
+// seconds from the death to the end of the replay, played back at killcamSpeed
+export function killcamLength () {
+  if (!killcamSecs) {
+    const step = 0.001
+    let t = 0
+    for (let u = -KILLCAM.before; u < KILLCAM.after; u += step * killcamSpeed(u)) t += step
+    killcamSecs = KILLCAM.delay + t
+  }
+  return killcamSecs
+}
+
 export const TEAMS = {
   allies: { id: 'allies', name: 'Allies', color: '#7f9a4c', hud: '#9fc16a' },
   axis: { id: 'axis', name: 'Axis', color: '#8a8f99', hud: '#d0574a' }

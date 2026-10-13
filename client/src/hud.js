@@ -10,6 +10,13 @@ const NORTH_X = -0.8502
 const NORTH_Z = -0.5264
 
 const $ = (id) => document.getElementById(id)
+
+// what a kill was made with (weapon: the id in the kill message), as the killfeed names it
+export function weaponLabel (weapon, team) {
+  return weapon === GRENADE.id ? GRENADE.name : weapon === KNIFE.id ? KNIFE.name[team] ?? 'Knife'
+    : weapon === SD.bomb.id ? SD.bomb.name : weapon === TANK.gunId ? TANK.sides[team]?.gunName ?? 'Tank gun'
+      : weapon === TANK.crushId ? 'Tracks' : WEAPONS[weapon]?.name || weapon
+}
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 
 // top-down outline (world x, z) and top height of a map collider: an oriented box, or a convex hull's points
@@ -95,7 +102,9 @@ export class Hud {
       scoreboard: $('scoreboard'),
       netstat: $('netstat'),
       pause: $('pause'),
-      dmgDirs: $('damage-dirs')
+      dmgDirs: $('damage-dirs'),
+      killcam: $('killcam'),
+      kcProgress: $('kc-progress')
     }
     this.compassCtx = this.el.compass.getContext('2d')
     this.hitT = 0
@@ -311,9 +320,7 @@ export class Hud {
     const d = document.createElement('div')
     d.className = 'kf'
     const name = (p) => p ? `<span class="${p.team}${p.id === myId ? ' me' : ''}">${esc(p.name)}</span>` : '<span>World</span>'
-    const w = weapon === GRENADE.id ? GRENADE.name : weapon === KNIFE.id ? KNIFE.name[killer?.team] ?? 'Knife'
-      : weapon === SD.bomb.id ? SD.bomb.name : weapon === TANK.gunId ? TANK.sides[killer?.team]?.gunName ?? 'Tank gun'
-        : weapon === TANK.crushId ? 'Tracks' : WEAPONS[weapon]?.name || weapon
+    const w = weaponLabel(weapon, killer?.team)
     if (killer && killer.id !== victim?.id) {
       d.innerHTML = `${name(killer)}<span class="wpn">${esc(w)}</span>${headshot ? '<span class="hs">HEADSHOT</span>' : ''}${name(victim)}`
     } else {
@@ -338,6 +345,15 @@ export class Hud {
     const s = Math.max(0, Math.ceil(secondsLeft))
     const txt = status ?? (s > 0 ? `Respawning in ${s}…` : 'Respawning…')
     this.set('respawn', txt, (v) => { this.el.deathRespawn.textContent = v })
+  }
+
+  // the kill-cam's letterbox: null, or { progress: 0..1 of the replay } while it plays (spectate() names the killer)
+  killcam (info) {
+    this.set('killcam', !!info, (v) => {
+      this.el.hud.classList.toggle('killcam', v)
+      this.el.killcam.classList.toggle('hidden', !v)
+    })
+    if (info) this.set('kcprogress', Math.round(info.progress * 1000), (v) => { this.el.kcProgress.style.width = `${v / 10}%` })
   }
 
   // info: null, or what the spectator camera shows: { name, team, hp, weapon, sub, keys (html) }, name '' for none

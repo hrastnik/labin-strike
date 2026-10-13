@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Game } from '../server/game.js'
-import { MATCH, PLAYER } from '../shared/constants.js'
+import { MATCH, PLAYER, killcamLength } from '../shared/constants.js'
 import { WEAPONS, WEAPON_LIST, GRENADE, KNIFE, AMMO_DROP, CLASS_IDS, isValidLoadout, startingAmmo, sanitizeLoadout, damageFor } from '../shared/weapons.js'
 import { NADE_DT, createGrenade, stepGrenade } from '../shared/grenade.js'
 import { lineOfSight, rayMap } from '../shared/physics.js'
@@ -46,6 +46,11 @@ test.before(async () => {
   clock = 100000
   game.restartMatch()
 })
+
+// identity of game objects: a failing assert.equal would diff their whole graph (the physics world included)
+function same (actual, expected, msg) {
+  assert.ok(actual === expected, msg || `got ${actual?.id ?? actual}, expected ${expected?.id ?? expected}`)
+}
 
 function advance (ms) {
   const steps = Math.ceil(ms / 33)
@@ -173,6 +178,41 @@ test('class change applies at once right after spawning, otherwise at the next s
   assert.equal(p.loadout.primary, 'kar98k_scoped')
   assert.equal(ch.last('spawn').loadout.primary, 'kar98k_scoped')
   ch.disconnect()
+})
+
+test('a soldier killed by an enemy respawns after the kill-cam, sooner when they skip it', () => {
+  const ax = connect('Kilo', { team: 'axis' })
+  const al = connect('Lima', { team: 'allies' })
+  const a = deploy(ax, { cls: 'assault', primary: 'mp40', secondary: 'luger' })
+  const b = deploy(al, { cls: 'assault', primary: 'thompson', secondary: 'm1911' })
+  const full = Math.round(killcamLength() * 1000)
+
+  game.kill(b, a, 'mp40', false)
+  advance(full - 100)
+  assert.equal(b.alive, false, 'still watching')
+  advance(600)
+  assert.equal(b.alive, true, 'back in once it is over')
+
+  game.kill(b, a, 'mp40', false)
+  advance(1000)
+  al.send('skip')
+  advance(MATCH.respawnDelay * 1000 - 1000 - 100)
+  assert.equal(b.alive, false, 'skipping never beats the usual delay')
+  advance(200)
+  assert.equal(b.alive, true)
+
+  game.kill(b, a, 'mp40', false)
+  advance(MATCH.respawnDelay * 1000 + 500)
+  al.send('skip')
+  advance(100)
+  assert.equal(b.alive, true, 'skipping late respawns at once')
+  al.send('skip')
+  assert.equal(b.alive, true, 'and means nothing to the living')
+
+  game.kill(b, null, 'mp40', false)
+  advance(MATCH.respawnDelay * 1000 + 100)
+  assert.equal(b.alive, true, 'no kill-cam without a killer')
+  ax.disconnect(); al.disconnect()
 })
 
 test('switching teams converts the loadout, returns to the loadout screen and is rate limited', () => {
@@ -836,7 +876,7 @@ const beside = (t) => tankPoint(t, -(TANK.half[0] + 0.6), 0, 0)
 function climbIn (ch, t) {
   ch.player.pos = beside(t)
   ch.send('tank', { on: true })
-  assert.equal(ch.player.tank, t)
+  same(ch.player.tank, t)
 }
 
 // a point straight down the gun's line, short of whatever solid it would hit first
@@ -870,10 +910,10 @@ test("tanks: a soldier climbs into their own side's tank only, one at a time, an
   const mine = tank('axis')
   a.pos = beside(tank('allies'))
   ax.send('tank', { on: true })
-  assert.equal(a.tank, null, "not the enemy's")
+  same(a.tank, null, "not the enemy's")
   a.pos = tankPoint(mine, -(TANK.half[0] + 3), 0, 0)
   ax.send('tank', { on: true })
-  assert.equal(a.tank, null, 'out of reach')
+  same(a.tank, null, 'out of reach')
   climbIn(ax, mine)
   assert.equal(mine.driver, a.id)
   assert.equal(ax.last('drive').id, mine.id)
@@ -881,13 +921,13 @@ test("tanks: a soldier climbs into their own side's tank only, one at a time, an
   const c = deploy(mate, AXIS_KIT)
   c.pos = beside(mine)
   mate.send('tank', { on: true })
-  assert.equal(c.tank, null, 'taken')
+  same(c.tank, null, 'taken')
   game.broadcastSnapshot()
   assert.ok(al.last('snap').p.find((e) => e[0] === a.id)[6] & 64, 'snapshots say who is inside')
   assert.equal(fire(ax, 'mp40'), false, 'no rifle out of the hatch')
 
   ax.send('tank', { on: false })
-  assert.equal(a.tank, null)
+  same(a.tank, null)
   assert.equal(mine.driver, 0)
   const out = ax.last('drive')
   assert.equal(out.id, 0)
@@ -895,7 +935,7 @@ test("tanks: a soldier climbs into their own side's tank only, one at a time, an
   assert.equal(underHull(mine, ...out.pos, 0.2), false, 'out beside the hull, not in it')
   assert.ok(Math.hypot(out.pos[0] - mine.pos[0], out.pos[2] - mine.pos[2]) < TANK.half[1] + 2)
   mate.send('tank', { on: true })
-  assert.equal(c.tank, mine, 'free again')
+  same(c.tank, mine, 'free again')
   mate.disconnect()
   assert.equal(mine.driver, 0, 'a driver who leaves frees it')
   endTanks(ax, al)
@@ -958,6 +998,7 @@ test('tanks: the cannon reloads between shells, kills soldiers in the blast, and
   ax.send('shell', { t: mine.turret, g: 0 })
   assert.equal(shells(), 1, 'still reloading')
 
+  al.send('skip') // the kill-cam
   advance((MATCH.respawnDelay + 0.5) * 1000)
   assert.ok(b.alive)
   b.protectUntil = 0
@@ -973,14 +1014,15 @@ test('tanks: the cannon reloads between shells, kills soldiers in the blast, and
   assert.equal(n, Math.ceil(TANK.maxHealth / (TANK.damage * armourFor(TANK.gunId))), 'shells it takes')
   assert.equal(al.last('tankboom').id, theirs.id)
   assert.equal(b.alive, false, 'the crew goes with it')
-  assert.equal(b.tank, null)
+  same(b.tank, null)
   assert.equal(al.last('drive').id, theirs.id, 'the kill tells the crew, not a drive message that would set them down in the hull')
   assert.equal(al.last('kill').w, TANK.gunId)
 
+  al.send('skip')
   advance((MATCH.respawnDelay + 0.5) * 1000)
   b.pos = beside(theirs)
   al.send('tank', { on: true })
-  assert.equal(b.tank, null, 'nobody drives a wreck')
+  same(b.tank, null, 'nobody drives a wreck')
   clock += MATCH.tankToggleCooldown * 1000
   al.send('tanks', { on: false })
   clock += MATCH.tankToggleCooldown * 1000
@@ -1026,7 +1068,7 @@ test('tanks: in S&D every round starts with both tanks back home and empty', () 
   assert.equal(game.sd.round, 2)
   assert.deepEqual(t.pos, home)
   assert.equal(t.driver, 0)
-  assert.equal(a.tank, null)
+  same(a.tank, null)
   assert.ok(a.alive)
   endTanks(ax, al)
 })
@@ -1051,7 +1093,7 @@ const besideBike = (k) => bikePoint(k, -(BIKE.half[0] + 0.5), 0, 0)
 function getOn (ch, k) {
   ch.player.pos = besideBike(k)
   ch.send('bike', { on: true })
-  assert.equal(ch.player.bike, k)
+  same(ch.player.bike, k)
 }
 
 test("bikes: one per side always stands at its base, clear of the spawns and the tank's spot", () => {
@@ -1076,10 +1118,10 @@ test("bikes: a soldier gets on their own side's bike only, rides it unarmed and 
   const mine = bike('axis')
   a.pos = besideBike(bike('allies'))
   ax.send('bike', { on: true })
-  assert.equal(a.bike, null, "not the enemy's")
+  same(a.bike, null, "not the enemy's")
   a.pos = bikePoint(mine, -(BIKE.half[0] + 3), 0, 0)
   ax.send('bike', { on: true })
-  assert.equal(a.bike, null, 'out of reach')
+  same(a.bike, null, 'out of reach')
   getOn(ax, mine)
   assert.equal(mine.driver, a.id)
   assert.equal(ax.last('ride').id, mine.id)
@@ -1087,7 +1129,7 @@ test("bikes: a soldier gets on their own side's bike only, rides it unarmed and 
   const c = deploy(mate, AXIS_KIT)
   c.pos = besideBike(mine)
   mate.send('bike', { on: true })
-  assert.equal(c.bike, null, 'taken')
+  same(c.bike, null, 'taken')
   game.broadcastSnapshot()
   assert.ok(al.last('snap').p.find((e) => e[0] === a.id)[6] & 128, 'snapshots say who is riding')
   assert.equal(fire(ax, 'mp40'), false, 'both hands on the bars')
@@ -1097,14 +1139,14 @@ test("bikes: a soldier gets on their own side's bike only, rides it unarmed and 
   assert.ok(a.hp < PLAYER.maxHealth, 'the rider can be shot')
 
   ax.send('bike', { on: false })
-  assert.equal(a.bike, null)
+  same(a.bike, null)
   assert.equal(mine.driver, 0)
   const out = ax.last('ride')
   assert.equal(out.id, 0)
   assert.deepEqual(a.pos, out.pos)
   assert.ok(bikeDistance([out.pos[0], out.pos[1] + 1, out.pos[2]], mine) > PLAYER.radius, 'off beside the bike, not in it')
   mate.send('bike', { on: true })
-  assert.equal(c.bike, mine, 'free again')
+  same(c.bike, mine, 'free again')
   mate.disconnect()
   assert.equal(mine.driver, 0, 'a rider who leaves frees it')
   endTanks(ax, al)
@@ -1158,13 +1200,14 @@ test('bikes: bullets and grenades wear one down, the rider goes with it, and a n
   assert.equal(k.destroyed, true, 'one at the wheel')
   assert.equal(al.last('bikeboom').id, k.id)
   assert.equal(b.alive, false, 'the rider goes with it')
-  assert.equal(b.bike, null)
+  same(b.bike, null)
   assert.match(al.last('notice').m, /Harley-Davidson WLA was destroyed/)
 
+  al.send('skip') // the kill-cam
   advance((MATCH.respawnDelay + 0.5) * 1000)
   b.pos = besideBike(k)
   al.send('bike', { on: true })
-  assert.equal(b.bike, null, 'nobody rides a wreck')
+  same(b.bike, null, 'nobody rides a wreck')
   advance((BIKE.respawn - MATCH.respawnDelay - 2) * 1000)
   assert.equal(k.destroyed, true, 'not yet')
   advance(2000)
@@ -1208,7 +1251,7 @@ test('bikes: in S&D every round starts with both bikes whole, home and empty', (
   assert.equal(game.sd.round, 2)
   assert.deepEqual(k.pos, home)
   assert.equal(k.driver, 0)
-  assert.equal(a.bike, null)
+  same(a.bike, null)
   assert.ok(a.alive)
   assert.equal(bike('allies').destroyed, false)
   endTanks(ax, al)

@@ -3,6 +3,7 @@
 // rotations on top of the rest pose.
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { HISTORY } from './killcam.js'
 
 // keep in step with server/cats.js
 const STATE = { idle: 0, walk: 1, run: 2, lie: 3 }
@@ -93,7 +94,7 @@ class Cat {
     const last = b[b.length - 1]
     if (last && t <= last.t) return
     b.push({ t, x: e[2], y: e[3], z: e[4], yaw: e[5], state: e[6] })
-    if (b.length > 30) b.splice(0, b.length - 30)
+    while (b.length > 2 && b[0].t < t - HISTORY) b.shift() // the kill-cam replays the last few seconds
   }
 
   sample (renderT) {

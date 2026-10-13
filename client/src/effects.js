@@ -113,7 +113,8 @@ export class Effects {
     p.s.visible = true
   }
 
-  impact (pos, normal, surface = 'world') {
+  // hole: leave a bullet hole (not when the kill-cam replays a shot that already left one)
+  impact (pos, normal, surface = 'world', hole = true) {
     const n = tmpV.set(normal[0], normal[1], normal[2])
     for (let i = 0; i < 4; i++) {
       const v = new THREE.Vector3(n.x + (Math.random() - 0.5) * 0.8, n.y + Math.random() * 0.6, n.z + (Math.random() - 0.5) * 0.8).multiplyScalar(0.6 + Math.random() * 0.8)
@@ -126,7 +127,7 @@ export class Effects {
       }
     }
     // decal, slightly off the surface and randomly rotated
-    this.decal(pos, normal, 0.004, 0.7 + Math.random() * 0.5)
+    if (hole) this.decal(pos, normal, 0.004, 0.7 + Math.random() * 0.5)
   }
 
   decal (p, n, lift, size) {

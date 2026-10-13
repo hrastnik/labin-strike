@@ -489,6 +489,7 @@ export class Avatars {
     this.map = new Map()
     this.offset = null // server time - local time
     this.lastSnapLocal = 0
+    this.hidden = false // kept up to date but not drawn (while the kill-cam shows the soldiers as they were)
   }
 
   // myTeam: null for a spectator, who is on neither side
@@ -532,6 +533,7 @@ export class Avatars {
     const rt = this.renderTime(delay)
     for (const a of this.map.values()) {
       if (a.sample(rt)) a.animate(dt)
+      if (this.hidden) a.root.visible = false
     }
   }
 
