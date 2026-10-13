@@ -10,6 +10,7 @@ import { buildMapWorld, rayMap, lineOfSight } from '@shared/physics.js'
 import { rayVsPlayer, knifeReach } from '@shared/hitbox.js'
 import { TANK, tankSide, gunRay, wrapAngle } from '@shared/tanks.js'
 import { createRenderer, createScene, fitSunToBounds, fetchMap, parseMap } from './renderer.js'
+import { ShadowCache } from './shadowcache.js'
 import { loadCars } from './cars.js'
 import { loadCats } from './cats.js'
 import { loadTanks } from './tanks.js'
@@ -74,6 +75,7 @@ const canvas = $('game')
 let highQuality = store.get('quality', '1') === '1'
 const renderer = createRenderer(canvas, highQuality)
 const { scene, sun } = createScene(renderer, highQuality)
+const shadowCache = new ShadowCache(renderer, sun)
 // near plane 0.1 (player capsule keeps the eye >= 0.35 m from walls): 2x the depth precision of 0.05
 const camera = new THREE.PerspectiveCamera(BASE_FOV, window.innerWidth / window.innerHeight, 0.1, 1600)
 camera.rotation.order = 'YXZ'
@@ -794,6 +796,9 @@ async function boot () {
     progress(0.99, 'Arming…')
     await weaponModels // before anything builds a weapon, grenade or knife
     fitSunToBounds(sun, mapData.bounds)
+    // the map and the parked cars never move: their shadows are rendered once
+    shadowCache.addStatic(mapRoot, ...(cars ? [cars] : []))
+    shadowCache.onBake = () => cars?.cull(null)
     player = new LocalPlayer(RAPIER, world)
     grenades = new Grenades(scene, RAPIER, world)
     hud.buildMinimap(mapData)
@@ -847,6 +852,8 @@ function frame () {
     tanks?.update(dt, avatars.renderTime(INTERP_DELAY), (pos) => effects.smoke(pos))
   }
   grenades?.update(dt, (pos, impact) => audio.nadeBounce(pos, Math.min(1, impact / 10)))
+  camera.updateMatrixWorld()
+  cars?.cull(camera)
   renderer.clear()
   renderer.render(scene, camera)
   if (G.state === 'playing' && player?.alive && !G.driving) viewmodel.render(renderer, 58 - (BASE_FOV - fovCurrent) * 0.35, scene, camera)

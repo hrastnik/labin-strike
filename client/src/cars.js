@@ -1,6 +1,8 @@
 // Parked cars: Blender-modelled bodies from cars.glb (tools/blender/cars), placed at the map's CAR_ markers.
 // Every model/group is one InstancedMesh, so a model costs 3 draw calls regardless of how many are parked.
-// Full detail only: there are no LODs (swapping them made the cars visibly pop).
+// Full detail only: there are no LODs (swapping them made the cars visibly pop).  Instead each frame only the cars
+// inside the view frustum are packed into the instance buffers (their shadows come from the static shadow cache,
+// which bakes with every car shown).
 //   <model>_paint   white car paint, tinted per instance (instanceColor)
 //   <model>_opaque  atlas material (palette cells + licence plates; plate row picked per instance)
 //   <model>_glass   windows / lamp lenses (blended)
@@ -12,6 +14,8 @@ const PLATE_V = 448 / 512  // plate strip height in the atlas (glTF v from the t
 // plate u runs 0..0.5 (right edge exactly on 0.5); palette cell centres start at 0.5 + 32/1024, so test halfway
 const PLATE_U_MAX = 0.5 + 16 / 1024
 const GROUPS = ['paint', 'opaque', 'glass']
+const _frustum = new THREE.Frustum()
+const _pv = new THREE.Matrix4()
 
 export async function loadCars (url, placements, renderer) {
   const loader = new GLTFLoader()
@@ -51,8 +55,10 @@ export class CarSystem extends THREE.Group {
       ;(byModel[model] ||= []).push(p)
     }
     const col = new THREE.Color()
+    this.models = []
     for (const [model, list] of Object.entries(byModel)) {
       const n = list.length
+      const entry = { list, meshes: [], spheres: [], shown: null }
       for (const g of GROUPS) {
         const s = src[model][g]
         if (!s) continue
@@ -73,6 +79,33 @@ export class CarSystem extends THREE.Group {
           if (g === 'paint') im.setColorAt(i, col.setRGB(c.paint[0], c.paint[1], c.paint[2]))
         })
         this.add(im)
+        // full per-instance data to pack the visible cars from
+        entry.meshes.push({ im, attrs: [im.instanceMatrix, im.instanceColor, geo.attributes.plateRow].filter(Boolean).map((a) => ({ a, full: a.array.slice() })) })
+        if (!geo.boundingSphere) geo.computeBoundingSphere()
+        entry.radius = Math.max(entry.radius || 0, geo.boundingSphere.center.length() + geo.boundingSphere.radius)
+      }
+      entry.spheres = list.map((c) => new THREE.Sphere(new THREE.Vector3().setFromMatrixPosition(c.matrix), entry.radius * c.matrix.getMaxScaleOnAxis()))
+      this.models.push(entry)
+    }
+  }
+
+  // pack the cars visible from camera (null: all of them) into the instance buffers
+  cull (camera) {
+    if (camera) _frustum.setFromProjectionMatrix(_pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse))
+    for (const e of this.models) {
+      const shown = []
+      e.spheres.forEach((s, i) => { if (!camera || _frustum.intersectsSphere(s)) shown.push(i) })
+      const key = shown.join(',')
+      if (key === e.shown) continue
+      e.shown = key
+      for (const { im, attrs } of e.meshes) {
+        for (const { a, full } of attrs) {
+          const k = a.itemSize
+          shown.forEach((i, j) => a.array.set(full.subarray(i * k, i * k + k), j * k))
+          a.needsUpdate = true
+        }
+        im.count = shown.length
+        im.visible = shown.length > 0
       }
     }
   }
