@@ -12,6 +12,42 @@ const NORTH_Z = -0.5264
 const $ = (id) => document.getElementById(id)
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 
+// top-down outline (world x, z) and top height of a map collider: an oriented box, or a convex hull's points
+function outline (col) {
+  const [qx, qy, qz, qw] = col.rotation
+  const [px, py, pz] = col.position
+  const rot = (x, y, z) => { // quaternion rotation
+    const tx = 2 * (qy * z - qz * y); const ty = 2 * (qz * x - qx * z); const tz = 2 * (qx * y - qy * x)
+    return [x + qw * tx + (qy * tz - qz * ty), y + qw * ty + (qz * tx - qx * tz), z + qw * tz + (qx * ty - qy * tx)]
+  }
+  const local = []
+  if (col.hull) {
+    for (let i = 0; i < col.hull.length; i += 3) local.push([col.hull[i], col.hull[i + 1], col.hull[i + 2]])
+  } else {
+    const [hx, hy, hz] = col.halfExtents
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) local.push([sx * hx, sy * hy, sz * hz])
+  }
+  let top = -Infinity
+  const flat = local.map(([x, y, z]) => {
+    const w = rot(x, y, z)
+    top = Math.max(top, py + w[1])
+    return [px + w[0], pz + w[2]]
+  })
+  // 2D convex hull (monotone chain)
+  flat.sort((a, b) => a[0] - b[0] || a[1] - b[1])
+  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+  const half = (list) => {
+    const h = []
+    for (const p of list) {
+      while (h.length >= 2 && cross(h[h.length - 2], h[h.length - 1], p) <= 0) h.pop()
+      h.push(p)
+    }
+    h.pop()
+    return h
+  }
+  return { pts: [...half(flat), ...half([...flat].reverse())], top }
+}
+
 export class Hud {
   constructor () {
     this.el = {
@@ -317,20 +353,14 @@ export class Hud {
     const g = c.getContext('2d')
     g.fillStyle = 'rgba(90, 92, 80, 0.55)'
     g.fillRect(0, 0, w, h)
-    const sorted = mapData.colliders.filter((col) => !col.clip).sort((a, b2) => (a.position[1] + a.halfExtents[1]) - (b2.position[1] + b2.halfExtents[1]))
-    for (const col of sorted) {
-      const [qx, qy, qz, qw] = col.rotation
-      const yaw = Math.atan2(2 * (qw * qy + qx * qz), 1 - 2 * (qy * qy + qz * qz))
-      const top = col.position[1] + col.halfExtents[1]
+    const sorted = mapData.colliders.filter((col) => !col.clip).map(outline).sort((a, b2) => a.top - b2.top)
+    for (const { pts, top } of sorted) {
       if (top < 0.35) continue
       // three bands: low cover, raised ground / walls (park, retaining wall), buildings
-      const shade = top > 6 ? 'rgba(28, 27, 22, 0.92)' : top > 1.6 ? 'rgba(96, 104, 78, 0.9)' : 'rgba(150, 144, 120, 0.85)'
-      g.save()
-      g.translate((col.position[0] - b.min[0]) * scale, (col.position[2] - b.min[2]) * scale)
-      g.rotate(-yaw)
-      g.fillStyle = shade
-      g.fillRect(-col.halfExtents[0] * scale, -col.halfExtents[2] * scale, col.halfExtents[0] * 2 * scale, col.halfExtents[2] * 2 * scale)
-      g.restore()
+      g.fillStyle = top > 6 ? 'rgba(28, 27, 22, 0.92)' : top > 1.6 ? 'rgba(96, 104, 78, 0.9)' : 'rgba(150, 144, 120, 0.85)'
+      g.beginPath()
+      pts.forEach(([x, z], i) => g[i ? 'lineTo' : 'moveTo']((x - b.min[0]) * scale, (z - b.min[2]) * scale))
+      g.fill()
     }
     this.mapImage = { canvas: c, scale, x0: b.min[0], z0: b.min[2] }
   }

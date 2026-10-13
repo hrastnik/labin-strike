@@ -5,6 +5,7 @@ import math
 import bmesh
 from mathutils import Matrix, Vector
 
+from . import hulls
 from .lib import G, collider, collider_seg, rng, rot2, v3
 from .palette import M
 
@@ -139,7 +140,7 @@ _car_serial = [0]
 
 def model_car(x, y, yaw, z, kind, paint, collide):
     """placement marker CAR_<n> (extras: model, paint colour) for the client's instanced cars, plus the blob shadow
-    and colliders fitted to the model."""
+    and convex-hull colliders cut from the model itself (hulls.car_pieces)."""
     from cars import specs as car_specs
     from .lib import marker
     _car_serial[0] += 1
@@ -153,12 +154,10 @@ def model_car(x, y, yaw, z, kind, paint, collide):
     ob['car'] = name
     ob['paint'] = [round(c, 4) for c in col]
     ob['plate'] = _car_serial[0] % 4          # (no rng draw: keeps the rest of the map's random layout unchanged)
-    L, W, H, belt = d['L'], d['W'], d['H'], d['belt']
+    L, W, belt = d['L'], d['W'], d['belt']
     G['Ground.decals'].card((x, y, z + 0.015), (*rot2(1, 0, yaw), 0), (*rot2(0, 1, yaw), 0), L + 0.5, W + 0.6, M['blob'])
     if collide:
-        cx, cy = rot2((d['cab_f'] + d['cab_r']) / 2, 0, yaw)
-        collider('car', (x, y, z + belt / 2 + 0.06), (L - 0.1, W - 0.05, belt - 0.12), rz=yaw)
-        collider('car', (x + cx, y + cy, z + (belt + H) / 2), (d['cab_f'] - d['cab_r'], W - 0.25, H - belt), rz=yaw)
+        hulls.car_colliders(name, belt, x, y, z, yaw)
     return kind
 
 
@@ -261,9 +260,9 @@ def tree_broad(x, y, z, h=11.0, crown=4.0, leaf=None, trunk_h=None, lean=(0, 0),
     base = Vector((x, y, z))
     top = Vector((x + lean[0], y + lean[1], z + trunk_h))
     wob = Vector((rng.uniform(-0.25, 0.25), rng.uniform(-0.25, 0.25), 0))
-    mb.tube([(x, y, z - 0.25), tuple(base.lerp(top, 0.35) + wob * 0.6 + Vector((0, 0, 0.0))),
-             tuple(base.lerp(top, 0.7) + wob), tuple(top)], r0, M['bark'], seg=9)
-    mb.cyl((x, y, z + 0.12), r0 * 1.55, 0.5, M['bark'], seg=9, r2=r0 * 1.02)
+    trunk = mb.tube([(x, y, z - 0.25), tuple(base.lerp(top, 0.35) + wob * 0.6 + Vector((0, 0, 0.0))),
+                     tuple(base.lerp(top, 0.7) + wob), tuple(top)], r0, M['bark'], seg=9)
+    flare = mb.cyl((x, y, z + 0.12), r0 * 1.55, 0.5, M['bark'], seg=9, r2=r0 * 1.02)
     cz = z + trunk_h + (h - trunk_h) * 0.52
     cc = Vector((x + lean[0] * 1.3, y + lean[1] * 1.3, cz))
     rz_ = (h - trunk_h) / 2
@@ -305,7 +304,10 @@ def tree_broad(x, y, z, h=11.0, crown=4.0, leaf=None, trunk_h=None, lean=(0, 0),
             else:
                 _facing_card(mb, p, _rand_unit(), rng.uniform(1.4, 2.2) * s0, inner, nrm, twist=1.5)
     if collide:
-        collider('tree', (x + lean[0] * 0.3, y + lean[1] * 0.3, z + trunk_h / 2), (r0 * 1.6, r0 * 1.6, trunk_h + 0.4))
+        # the trunk curves (wobble, lean): one hull per tube segment, plus the root flare
+        for i in range(3):
+            hulls.collider_hull('tree', [v.co for f in trunk[i * 9:(i + 1) * 9] for v in f.verts])
+        hulls.collider_hull('tree', [v.co for v in flare])
 
 
 def tree_conifer(x, y, z, h=16.0, rbase=3.0, collide=True, g='Foliage.trees', leaf=None, levels=None, droop=0.25):
@@ -314,7 +316,7 @@ def tree_conifer(x, y, z, h=16.0, rbase=3.0, collide=True, g='Foliage.trees', le
     leaf = leaf or M['leaf_spruce']
     mb = G[g]
     r0 = max(0.16, h * 0.018)
-    mb.cyl((x, y, z + h * 0.5 - 0.2), r0, h + 0.4, M['bark_pine'], seg=7, r2=0.03)
+    trunk = mb.cyl((x, y, z + h * 0.5 - 0.2), r0, h + 0.4, M['bark_pine'], seg=7, r2=0.03)
     # core: stacked rings of an irregular star section, radius following the crown profile
     core = M['spruce_core']
     z0 = z + h * 0.1
@@ -364,7 +366,7 @@ def tree_conifer(x, y, z, h=16.0, rbase=3.0, collide=True, g='Foliage.trees', le
     mb.card((x, y, z + h * 0.99), (1, 0, 0), (0, 0, 1), 0.7, 1.4, leaf, uv=(0.0, 0.2, 0.6, 0.8))
     mb.card((x, y, z + h * 0.99), (0, 1, 0), (0, 0, 1), 0.7, 1.4, leaf, uv=(0.0, 0.2, 0.6, 0.8))
     if collide:
-        collider('tree', (x, y, z + 2.0), (r0 * 2.2, r0 * 2.2, 4.0))
+        hulls.collider_hull('tree', hulls.clip_z(trunk, z + 4.0))
 
 
 def tree_cedar(x, y, z, h=15.0, r=5.5, g='Foliage.trees', collide=True):
@@ -373,7 +375,7 @@ def tree_cedar(x, y, z, h=15.0, r=5.5, g='Foliage.trees', collide=True):
     r0 = h * 0.03
     leaf = M['leaf_cedar']
     inner = _inner(leaf)
-    mb.tube([(x, y, z - 0.2), (x + 0.3, y, z + h * 0.55), (x + 0.1, y + 0.2, z + h)], r0, M['bark'], seg=8)
+    trunk = mb.tube([(x, y, z - 0.2), (x + 0.3, y, z + h * 0.55), (x + 0.1, y + 0.2, z + h)], r0, M['bark'], seg=8)
     mb.blob((x + 0.2, y + 0.1, z + h * 0.55), 1.0, M['spruce_core'], scale=(r * 0.55, r * 0.55, h * 0.36), jitter=0.12, sub=2,
             smooth=True)
     layers = 9
@@ -398,7 +400,7 @@ def tree_cedar(x, y, z, h=15.0, r=5.5, g='Foliage.trees', collide=True):
             _facing_card(mb, c, Vector((math.cos(a), math.sin(a), 0.35)), rng.uniform(1.8, 2.5), leaf if i % 3 else inner, nrm,
                          twist=0.4, aspect=1.3)
     if collide:
-        collider('tree', (x, y, z + 2.0), (r0 * 2.2, r0 * 2.2, 4.0))
+        hulls.collider_hull('tree', hulls.clip_z([v for f in trunk[:8] for v in f.verts], z + 4.0))
 
 
 def _fuzz(mb, p, n, s, m):
@@ -415,8 +417,9 @@ def bush(x, y, z, r=1.0, h=None, leaf=None, g='Foliage.bushes', collide=None):
     mb = G[g]
     h = h or r * 1.2
     c = Vector((x, y, z + h * 0.5))
-    mb.blob(tuple(c - Vector((0, 0, h * 0.06))), 1.0, M['shrub_core'], scale=(r * 0.5, r * 0.5, h * 0.32), jitter=0.1, sub=2,
-            smooth=True)
+    core = mb.blob(tuple(c - Vector((0, 0, h * 0.06))), 1.0, M['shrub_core'], scale=(r * 0.5, r * 0.5, h * 0.32), jitter=0.1,
+                   sub=2, smooth=True)
+    mass = [v.co.copy() for v in core]     # where the foliage is dense: the core and every leaf card's centre
     m = leaf or M['leaf_hedge']
     inner = _inner(m)
     nrm = lambda co, cc=c: ((co - cc).normalized() + Vector((0, 0, 0.45))).normalized()
@@ -436,6 +439,7 @@ def bush(x, y, z, r=1.0, h=None, leaf=None, g='Foliage.bushes', collide=None):
         lat = (ax * (d.dot(ax) * kx) + ay * (d.dot(ay) * ky)) * r * rr
         p = c + lat + lean * (0.5 + d.z * 0.5) + Vector((0, 0, d.z * h * 0.5 * rr))
         p.z = max(p.z, z + s * 0.3)
+        mass.append(p.copy())
         if outer:
             _facing_card(mb, p, (p - c) + Vector((0, 0, 0.2)), s, m, nrm, twist=3.1)
         else:
@@ -446,14 +450,13 @@ def bush(x, y, z, r=1.0, h=None, leaf=None, g='Foliage.bushes', collide=None):
         d = ax * (math.cos(a) * kx) + ay * (math.sin(a) * ky)
         s = rng.uniform(0.6, 0.9) * max(0.7, r * 0.7)
         p = Vector((x, y, z)) + d * r * rng.uniform(0.6, 0.85) + lean * 0.3 + Vector((0, 0, s * 0.42 + rng.uniform(0.0, 0.12) * h))
+        mass += [p.copy(), Vector((p.x, p.y, z - 0.1))]     # the skirt reaches the ground
         _facing_card(mb, p, d + Vector((0, 0, 0.1)), s, m, nrm, twist=3.1)
     if collide is None:
         collide = g != 'Foliage.far'
     if collide:
-        # two crossed squares (an 8-pointed footprint) hugging the foliage ball
-        s = 1.6 * r
-        for a in (0.0, math.pi / 4):
-            collider('bush', (x, y, z + h * 0.46 - 0.1), (s, s, h * 0.92 + 0.2), rz=a)
+        # the lopsided foliage ball itself (a box's corners stuck out past its rounded top and sides)
+        hulls.collider_hull('bush', mass)
 
 
 def hedge(p0, p1, z, h=1.1, w=0.9, collide=True, g='Foliage.hedges', fuzz=True):
@@ -510,7 +513,7 @@ def hedge(p0, p1, z, h=1.1, w=0.9, collide=True, g='Foliage.hedges', fuzz=True):
             n3 = (nside * nn2.x + Vector((0, 0, nn2.y))).normalized()
             _fuzz(mb, p, n3, rng.uniform(0.45, 0.7), m)
     if collide:
-        collider_seg('hedge', p0, p1, w * 0.92, z - 0.1, z + h)
+        hulls.collider_hull('hedge', [v.co for ring in rings for v in ring])
 
 
 def x_phase(p):

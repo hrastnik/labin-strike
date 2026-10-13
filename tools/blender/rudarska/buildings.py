@@ -651,9 +651,11 @@ def nw_corner_sw():
     wf.box(G[GD], 0.3, H / 2 - 0.1, 0.06, 0.6, H + 0.2, 0.14, M['ashlar'])
     # IDEAL sign pole at the corner
     P.sign_post(-61.6, -6.9, z0, math.radians(110), [(M['sign_ideal'], 0.9, 2.7, 2.65)], h=4.1, r=0.05)
-    # buildings further down the side street / behind (backdrop)
-    box_building(rect(-82.0, -75.4, -20.0, -8.0), z0, 6.5, M['st_cream'], collide=False,
+    # cream building on the street corner: its east end (x > -78) is inside the playable area and the NW bound
+    # stops in it, so it must be solid or players walk through it and out
+    box_building(rect(-82.0, -75.4, -20.0, -8.0), z0, 6.5, M['st_cream'],
                  faces={2: [Op(1.5, 2.7, 3.6, 5.0, S['plain_sh'])]}, roof_kw=dict(parapet=0.3))
+    # buildings further down the side street / behind (backdrop)
     box_building(rect(-92.0, -77.0, -42.0, -24.0), z0, 7.5, M['st_white'], g=GB, go=GB, collide=False, grime=False,
                  faces={2: row(15.0, 5, 1.1, 4.4, 5.8, S['plain'])}, roof_kw=dict(parapet=0.3))
     box_building(rect(-61.5, -56.8, -42.0, -26.0), z0, 6.0, M['st_cream'], g=GB, go=GB, collide=False, grime=False,
@@ -698,6 +700,8 @@ def sports_centre():
     for z in (0.0, 3.4, 6.9, H + 0.3):
         mb.box(((gx0 + gx1) / 2, gy0 - 0.03, z0 + z), (gx1 - gx0, 0.1, 0.12), M['frame_dark'])
         mb.box((gx0 - 0.03, (gy0 + gy1) / 2, z0 + z), (0.1, gy1 - gy0, 0.12), M['frame_dark'])
+    # it stands 0.35 m proud of the building's footprint (+ frames): its own collider, or players clip into the glass
+    collider_mm('bld', gx0 - 0.08, gx1, gy0 - 0.08, gy1, z0 - 0.5, z0 + H + 0.3)
     # dark glazed box with a balcony (protrudes from the facade)
     bx0, bx1 = x0 + 4.8, x0 + 10.6
     mb.box_mm(bx0, bx1, yf - 1.3, yf, z0 + 4.3, z0 + 8.6, M['glass_dark'])
@@ -708,11 +712,13 @@ def sports_centre():
         mb.box((x, yf - 1.31, z0 + 6.45), (0.06, 0.04, 4.3), M['frame_dark'])
     mb.box_mm(bx0, bx1, yf - 1.42, yf - 1.36, z0 + 4.3, z0 + 5.35, M['glass_blue'])
     mb.box_mm(bx0, bx1, yf - 1.44, yf - 1.34, z0 + 5.35, z0 + 5.42, M['metal'])
+    collider_mm('bld', bx0 - 0.15, bx1 + 0.15, yf - 1.45, yf, z0 + 4.05, z0 + 8.85)
     # entrance canopy band over the ground-floor glazing
     mb.box_mm(x0 + 4.4, x0 + 17.8, yf - 1.6, yf, z0 + 3.25, z0 + 3.55, M['cladding_light'])
     collider_mm('canopy', x0 + 4.4, x0 + 17.8, yf - 1.6, yf, z0 + 3.25, z0 + 3.55)
     for x in (x0 + 4.6, x0 + 17.6):
         mb.pole((x, yf - 1.45), z0, z0 + 3.25, 0.06, M['metal'])
+        collider('pole', (x, yf - 1.45, z0 + 1.6), (0.12, 0.12, 3.3))
     # lettering and handball figure on the facade, CK logo on the ground-floor glass
     dec = G['Buildings.decals']
     dec.card(w.W(13.2, 4.75, 0.015), w.d, (0, 0, 1), 5.6, 1.6, M['sports_text'])

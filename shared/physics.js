@@ -18,9 +18,10 @@ export const TANK_QUERY = groups(G_TANK, G_SOLID | G_CLIP | G_TANK) // tanks dri
 export function buildMapWorld (RAPIER, mapData) {
   const world = new RAPIER.World({ x: 0, y: 0, z: 0 })
   for (const c of mapData.colliders) {
-    const [hx, hy, hz] = c.halfExtents
     const [qx, qy, qz, qw] = c.rotation
-    const desc = RAPIER.ColliderDesc.cuboid(hx, hy, hz)
+    const shape = c.hull ? RAPIER.ColliderDesc.convexHull(c.hull) : RAPIER.ColliderDesc.cuboid(...c.halfExtents)
+    if (!shape) continue // degenerate hull
+    const desc = shape
       .setTranslation(c.position[0], c.position[1], c.position[2])
       .setRotation({ x: qx, y: qy, z: qz, w: qw })
       .setCollisionGroups(c.clip ? CLIP_GROUPS : SOLID_GROUPS)
