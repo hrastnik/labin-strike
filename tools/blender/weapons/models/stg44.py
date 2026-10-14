@@ -10,6 +10,8 @@ REF = 'stg44'
 META = {'kind': 'rifle', 'client': {'magDir': [0, -0.97, -0.26]}}   # magazine drops along its forward rake
 
 BORE_V = -1.0      # the barrel sits ~1 mm under the calibrated axis in this photo
+SIGHT_V = 52.0     # top of the front post; the rear notch bottoms out NOTCH_DROP below it
+NOTCH_DROP = 2.0   # so the post's tip shows in the notch (the game's eye sits exactly on the sight line)
 
 
 def mag_edges(outline, origin, axis_deg, t0, t1, step=4):
@@ -118,11 +120,14 @@ def build(g):
     # ---------------------------------------------------------------- rear sight (tangent leaf)
     base = [(98, 34), (174, 34), (174, 39, 2), (164, 46, 2), (106, 46, 2), (98, 40, 2)]
     g.extrude(base, width=24, mat='phosphate', bevel=0.8, name='sightbase')
-    leaf = [(100, 45), (170, 47.5, 2), (170, 51, 1.5), (104, 52.5, 1), (100, 50)]
+    # leaf and slider stay under the line from the eye through the notch bottom to the post
+    leaf = [(100, 45), (170, 47.5, 2), (170, 49.0, 1.5), (104, 49.4, 1), (100, 49.2)]
     g.extrude(leaf, width=15, mat='blued', bevel=0.5, name='leaf')
-    notch = g.box(100, 112, 46, 58, width=16, mat='blued', bevel=0.5)
-    g.cut(notch, g.extrude([(-2.4, 58.5), (2.4, 58.5), (0.7, 52), (-0.7, 52)], 96, 116, plane='front', cutter=True, bevel=0))
-    g.box(140, 152, 45.5, 50.5, width=19, mat='blued', bevel=0.8)                 # slider
+    notch = g.box(100, 112, 46, SIGHT_V + 2.5, width=16, mat='blued', bevel=0.5)
+    nb = SIGHT_V - NOTCH_DROP
+    g.cut(notch, g.extrude([(-2.6, SIGHT_V + 3), (2.6, SIGHT_V + 3), (0.4, nb), (-0.4, nb)], 96, 116, plane='front',
+                           cutter=True, bevel=0))
+    g.box(140, 152, 45.5, 49.2, width=19, mat='blued', bevel=0.8)                 # slider
     g.lathe([(9.5, 0), (9.5, 3), (12, 3), (12.5, 0)], 'blued', axis='w', at=(146, 48), seg=14)
 
     # ---------------------------------------------------------------- gas system and barrel
@@ -147,7 +152,7 @@ def build(g):
     pillar = [(520, 2), (556, 2), (552, 38, 3), (551, 46), (529, 46), (524, 38, 3)]
     g.extrude(pillar, width=11, mat='phosphate', bevel=0.8, name='pillar')
     g.tube(527, 553, 11.2, 9.6, 'phosphate', at=(52.5, 0), seg=32)
-    g.box(536, 542, 40, 52, width=2.4, mat='blued', bevel=0.3)
+    g.box(536, 542, 40, SIGHT_V, width=1.5, mat='blued', bevel=0.3)
     # muzzle nut (knurled)
     nut = g.lathe([(556, 3.5), (556, 8.6), (558, 9.6), (574, 9.6), (576, 8.6), (576, 3.5)], 'blued', at=(BORE_V, 0),
                   seg=36, closed=True, name='nut')
@@ -184,7 +189,7 @@ def build(g):
 
     # ---------------------------------------------------------------- anchors
     g.anchor('muzzle', 577, BORE_V)
-    g.anchor('sight', 120, 52.0)            # sight line height (rear notch bottom ~ front post top)
+    g.anchor('sight', 120, SIGHT_V)            # sight line height (rear notch bottom ~ front post top)
     g.anchor('eject', 100, 14, 16)
     g.anchor('rh', -78, -86, 0)
     g.anchor('lh', 290, -16, 0)

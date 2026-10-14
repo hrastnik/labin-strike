@@ -12,7 +12,8 @@ REF = 'mp40'
 META = {'kind': 'rifle'}
 
 L = -1          # the side seen in the photo (left)
-SIGHT_V = 27.0
+SIGHT_V = 27.0      # top of the front post; the rear notch bottoms out NOTCH_DROP below it
+NOTCH_DROP = 2.0    # so the post's tip shows in the notch (the game's eye sits exactly on the sight line)
 
 
 def edges(outline, origin, axis_deg, t0, t1, step=4, trim=(20, 15), deg=2):
@@ -85,8 +86,10 @@ def build(g):
     g.extrude([(80, 21), (89, 21), (89, 23.5, 1), (86.5, 24.6), (82, 24.6), (80, 23.5)], width=13, mat='blued',
               bevel=0.4, name='leaf200')
     g.lathe([(-6.5, 0), (-6.5, 2.4), (6.5, 2.4), (6.5, 0)], 'blued', axis='w', at=(85.5, 22.4), seg=12)
-    leaf = g.extrude([(90.5, 21), (95, 21), (95, 29.5), (91.5, 29.5)], width=14, mat='blued', bevel=0.4, name='leaf')
-    g.cut(leaf, g.extrude([(-1.2, 31), (1.2, 31), (0.5, SIGHT_V), (-0.5, SIGHT_V)], 86, 100, plane='front',
+    leaf = g.extrude([(90.5, 21), (95, 21), (95, SIGHT_V + 2.0), (91.5, SIGHT_V + 2.0)], width=14, mat='blued', bevel=0.4,
+                     name='leaf')
+    nb = SIGHT_V - NOTCH_DROP
+    g.cut(leaf, g.extrude([(-2.6, SIGHT_V + 3), (2.6, SIGHT_V + 3), (0.4, nb), (-0.4, nb)], 86, 100, plane='front',
                           cutter=True, bevel=0))
 
     # ---------------------------------------------------------------- lower housing (bakelite) and hinge plate
@@ -159,7 +162,7 @@ def build(g):
     hood = g.lathe([(468, 6), (468, 7.4), (490, 7.4), (490, 6)], 'blued', at=(28.4, 0), seg=28, closed=True,
                    a0=-110, a1=110, name='hood')
     g.intersect(hood, g.extrude(rrect(467, 491, 14, 36, 7), width=30, cutter=True, bevel=0))
-    g.extrude([(476, 18), (480, 18), (479.5, SIGHT_V), (476.5, SIGHT_V)], width=2.2, mat='blued', bevel=0.3)
+    g.extrude([(476, 18), (480, 18), (479.5, SIGHT_V), (476.5, SIGHT_V)], width=1.4, mat='blued', bevel=0.3)
 
     # ---------------------------------------------------------------- folding stock (extended)
     def strut_v(u):

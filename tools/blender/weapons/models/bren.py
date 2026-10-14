@@ -137,8 +137,8 @@ def build(g):
     leaf = g.extrude([(-95, 34), (-90, 34), (-90.5, SIGHT_V + 4.5, 2), (-95.5, SIGHT_V + 4.5, 2)], SW - 6, SW + 6,
                      'park', bevel=0.4, name='rleaf')
     ring = g.cyl(-95, -90, 4.6, axis='u', at=(SIGHT_V, SW), seg=20, chamfer=0.4)
-    g.cut(leaf, g.cyl(-100, -85, 1.3, axis='u', at=(SIGHT_V, SW), seg=14, cutter=True))
-    g.cut(ring, g.cyl(-100, -85, 1.3, axis='u', at=(SIGHT_V, SW), seg=14, cutter=True))
+    g.cut(leaf, g.cyl(-100, -85, 2.2, axis='u', at=(SIGHT_V, SW), seg=16, cutter=True))      # game-sized peep
+    g.cut(ring, g.cyl(-100, -85, 2.2, axis='u', at=(SIGHT_V, SW), seg=16, cutter=True))
 
     # ---------------------------------------------------------------- barrel, carrying handle, regulator, flash hider
     g.lathe([(194, 0), (194, 14.5), (222, 14.5), (225, 12), (225, 0)], 'park', seg=28, name='barrelnut')
@@ -182,7 +182,7 @@ def build(g):
     for s in (1, -1):
         g.extrude([(597, 23), (613, 23), (612, SIGHT_V + 1, 3), (599, SIGHT_V + 1, 3)], SW + s * 3.5, SW + s * 6,
                   'park', bevel=0.4, name='fsear')
-    g.extrude([(601, 23), (610, 23), (609, SIGHT_V, 0.6), (603, SIGHT_V, 0.6)], width=2.2, mat='park', bevel=0.2,
+    g.extrude([(601, 23), (610, 23), (609, SIGHT_V, 0.6), (603, SIGHT_V, 0.6)], SW - 0.7, SW + 0.7, 'park', bevel=0.2,
               name='fblade')
 
     # ---------------------------------------------------------------- bipod (folded back under the gas cylinder)

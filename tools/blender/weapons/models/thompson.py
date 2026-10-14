@@ -86,7 +86,7 @@ def build(g):
         g.extrude(ear, s * 5.0, s * 8.0, 'park', bevel=0.5, name='ear')
     leaf = g.extrude([(-180, 12), (-175, 12), (-175, 31.5, 1.5), (-180, 31.5, 1.5)], width=10.2, mat='park', bevel=0.3,
                      name='peep')
-    g.cut(leaf, g.cyl(-190, -170, 1.6, axis='u', at=(SIGHT_V, 0), seg=12, cutter=True, chamfer=0))
+    g.cut(leaf, g.cyl(-190, -170, 2.4, axis='u', at=(SIGHT_V, 0), seg=16, cutter=True, chamfer=0))   # game-sized peep
 
     # ---------------------------------------------------------------- frame (trigger housing) and trigger guard
     fr = g.outline([(-134, -24), (34, -24), (34, -49), (-60, -49), (-100, -51), (-134, -51)])
@@ -144,7 +144,7 @@ def build(g):
             at=(0, 0), seg=28, closed=True, name='fsband')
     blade = [(372, 8), (391, 8), (391, 20), (389, 25.3, 2.5), (386, SIGHT_V), (377, SIGHT_V), (373.6, 25, 2.5),
              (372.2, 20)]
-    g.extrude(blade, width=3.2, mat='park', bevel=0.4, name='blade')
+    g.extrude(blade, width=1.8, mat='park', bevel=0.3, name='blade')
 
     # ---------------------------------------------------------------- horizontal forend (walnut)
     fe = [(129.5, -1.5, 1.5), (350.5, -1.5, 2), (350.5, -35.2, 7.5), (135, -41.8, 3), (129.5, -41.8, 2)]

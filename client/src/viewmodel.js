@@ -6,6 +6,7 @@ import { M, buildViewmodel, buildGrenadeViewmodel, buildKnifeViewmodel } from '.
 const _m = new THREE.Matrix4()
 const _m2 = new THREE.Matrix4()
 const _q = new THREE.Quaternion()
+const HIP_VIEW_TAN = Math.tan(29 * Math.PI / 180) // half the hip-fire viewmodel field of view (58 degrees)
 const UNIFORM = { allies: '#5d6638', axis: '#5a6260' }
 
 const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
@@ -96,6 +97,7 @@ export class Viewmodel {
     this.lastCycle = -1
     this.visible = true
     this.scoped = false // hide the gun while looking through a scope
+    this.ads = 0
   }
 
   setTeam (team) {
@@ -195,6 +197,7 @@ export class Viewmodel {
     const m = this.models[this.current]
     const w = WEAPONS[this.current]
     this.holder.visible = s.alive && this.visible && !this.scoped
+    this.ads = s.ads
 
     // walk bob
     const moving = Math.min(1, s.speed / 5) * (s.grounded ? 1 : 0)
@@ -312,8 +315,14 @@ export class Viewmodel {
     pos.y -= d * d * 0.25
     rx -= d * 0.6
 
+    // the narrowed aiming view magnifies the gun, and with it every bob, sway and kick: scale them back down
+    const k = m.adsViewFov ? 1 + (Math.tan(m.adsViewFov * Math.PI / 360) / HIP_VIEW_TAN - 1) * s.ads : 1
+    if (k !== 1) {
+      const rest = m.hip.clone().lerp(m.ads, s.ads)
+      pos.sub(rest).multiplyScalar(k).add(rest)
+    }
     m.root.position.copy(pos)
-    m.root.rotation.set(rx, ry, rz)
+    m.root.rotation.set(rx * k, ry * k, rz * k)
     this.poseGrenade(tf)
     this.poseKnife(kf)
 
@@ -390,7 +399,8 @@ export class Viewmodel {
       _q.copy(worldCamera.quaternion).invert()
       sc.environmentRotation.setFromRotationMatrix(_m.premultiply(_m2.makeRotationFromQuaternion(_q)))
     }
-    this.camera.fov = fov
+    const view = this.models[this.current]?.adsViewFov
+    this.camera.fov = view ? fov + (view - fov) * this.ads : fov
     this.camera.updateProjectionMatrix()
     renderer.clearDepth()
     renderer.render(this.scene, this.camera)

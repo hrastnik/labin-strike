@@ -10,6 +10,10 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
 
 const templates = new Map()
 const CLIENT_KEYS = { magDir: 1, magHidden: 1, ejectDown: 1, lhRotZ: 1, reloadRoll: 1, kick: 1 }
+// Aimed, the first-person camera of a gun narrows (a telephoto view of the gun alone) until its rear sight looks
+// as big as it would REAR_SIGHT_LOOK from the eye at REAR_SIGHT_FOV: big enough to read the notch or aperture.
+const REAR_SIGHT_LOOK = 0.05 // m
+const REAR_SIGHT_FOV = 51.6 // degrees (vertical)
 
 export async function loadWeaponModels (url) {
   const loader = new GLTFLoader()
@@ -100,6 +104,13 @@ export function applyWeaponModel (id, spec) {
     spec.ads = new THREE.Vector3(-a.sight.x, -a.sight.y, spec.ads.z)
   }
   if (a.eye) spec.ads.z = -a.eye.z   // ADS puts the eye here (over the cheek rest), not at a fixed distance
+  // seen from the cheek rest a real rear sight is a few pixels wide; magnify the gun instead of moving it closer, so
+  // the receiver keeps its place below the sights
+  if (a.sight && a.eye) {
+    t.rearSightZ ??= rearSightBack(t.parts.body, a.sight)
+    const d = a.eye.z - t.rearSightZ
+    spec.adsViewFov = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(REAR_SIGHT_FOV / 2)) * REAR_SIGHT_LOOK / d))
+  }
   if (a.eject) spec.ejectPort = a.eject.clone()
   // long-arm hands only: pistols keep their fixed two-handed grip (no spec.rh / lh)
   if (a.rh && spec.rh) spec.rh = [spec.rh[0], a.rh.y, a.rh.z]
@@ -112,6 +123,23 @@ export function applyWeaponModel (id, spec) {
   spec.lod = t.lod
   spec.modelled = true
   return true
+}
+
+// z of the back face of the rear sight: the hindmost body vertex standing above the sight line near the sight anchor
+// (the anchor marks the notch or aperture, which can sit a couple of centimetres into the sight's leaf or base)
+function rearSightBack (body, sight) {
+  const v = new THREE.Vector3()
+  let back = sight.z
+  body.updateMatrixWorld(true)
+  body.traverse((o) => {
+    if (!o.isMesh) return
+    const pos = o.geometry.attributes.position
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld)
+      if (v.y > sight.y + 0.001 && Math.abs(v.x - sight.x) < 0.025 && v.z > back && v.z < sight.z + 0.04) back = v.z
+    }
+  })
+  return back
 }
 
 // Single-piece models (knives, grenade): a clone of all the model's parts, or null when it is not modelled.

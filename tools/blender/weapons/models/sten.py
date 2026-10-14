@@ -63,7 +63,7 @@ def build(g):
     g.lathe([(272, 0), (272, 21.2), (276, 21.2), (276, 0)], 'black', at=(0, 0), seg=36, name='nut')
     blade = [(274, 20), (280, 20), (282, 22.5, 1.2), (279.3, SIGHT_V, 1.0), (276.5, SIGHT_V, 1.0),
              (274.6, 24)]
-    g.extrude(blade, width=3.2, mat='black', bevel=0.3, name='blade')
+    g.extrude(blade, width=1.8, mat='black', bevel=0.3, name='blade')
     sl = g.lathe([(276, 9.4), (276, 19.2), (368, 19.2), (371.5, 17.5), (372.6, 14), (372.6, 9.4)], 'black',
                  at=(0, 0), seg=36, closed=True, name='sleeve')
     for u in (308, 330, 354):                                                    # cooling holes, three rows

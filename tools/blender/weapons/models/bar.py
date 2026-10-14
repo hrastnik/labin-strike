@@ -157,7 +157,7 @@ def build(g):
     for s in (1, -1):
         g.extrude([(692, 14), (712, 14), (711, SIGHT_V - 3, 3), (695, SIGHT_V - 3, 3)], s * 4.6, s * 7.6, 'park',
                   bevel=0.4, name='fsear')
-    g.extrude([(697, 15), (707, 15), (705, SIGHT_V, 0.6), (700, SIGHT_V, 0.6)], width=2.4, mat='park', bevel=0.2,
+    g.extrude([(697, 15), (707, 15), (705, SIGHT_V, 0.6), (700, SIGHT_V, 0.6)], width=1.5, mat='park', bevel=0.2,
               name='fblade')
 
     # ---------------------------------------------------------------- bipod (A2, on the flash hider)

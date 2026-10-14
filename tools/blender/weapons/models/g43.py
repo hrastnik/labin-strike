@@ -120,7 +120,7 @@ def build(g):
               name='fsbase')
     g.tube(740, 766.5, 11.0, 9.4, 'phosphate', at=(32.0, 0), seg=32, chamfer=0.4, name='hood')
     g.extrude([(748.5, 21), (757.5, 21), (756.5, SIGHT_V - 1.0), (755.2, SIGHT_V), (750.8, SIGHT_V),
-               (749.5, SIGHT_V - 1.0)], width=2.0, mat='phosphate', bevel=0.2, name='post')
+               (749.5, SIGHT_V - 1.0)], width=1.3, mat='phosphate', bevel=0.2, name='post')
     pin(g, 749, 12, 5.0, r=1.0, h=0.2)
 
     # ---------------------------------------------------------------- trigger guard (+ trigger) and mag catch

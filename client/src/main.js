@@ -1016,7 +1016,7 @@ function frame () {
   cars?.cull(camera)
   renderer.clear()
   renderer.render(scene, camera)
-  if (G.state === 'playing' && ((player?.alive && !G.driving && !G.riding) || spec.firstPerson || killcam.firstPerson)) viewmodel.render(renderer, 58 - (BASE_FOV - fovCurrent) * 0.35, scene, camera)
+  if (G.state === 'playing' && ((player?.alive && !G.driving && !G.riding) || spec.firstPerson || killcam.firstPerson)) viewmodel.render(renderer, 58 - (BASE_FOV - fovCurrent) * 0.25, scene, camera)
   if (G.trace) G.trace.push([now, camera.position.x, camera.position.y, camera.position.z])
   input.endFrame()
 }

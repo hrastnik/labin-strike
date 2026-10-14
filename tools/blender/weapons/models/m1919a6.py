@@ -149,7 +149,7 @@ def build(g):
     for u0, u1 in ((764, 777), (793, 806)):
         g.extrude([(u0, 33), (u1, 33), (u1, 51, 4), (u1 - 3, 56, 3), (u0 + 2, 56, 3), (u0, 50, 4)], width=12,
                   mat='park', bevel=0.6, name='fsear')
-    g.extrude([(780, 33), (790, 33), (788, SIGHT_V), (783, SIGHT_V)], width=2.4, mat='park', bevel=0.3,
+    g.extrude([(780, 33), (790, 33), (788, SIGHT_V), (783, SIGHT_V)], width=1.5, mat='park', bevel=0.3,
               name='fsblade')
 
     # ---------------------------------------------------------------- bipod (clamped under the bearing, legs down)

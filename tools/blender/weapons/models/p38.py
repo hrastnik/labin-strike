@@ -13,7 +13,7 @@ GRIP_A = -98.4                      # magazine / grip axis (deg from +u)
 MAG_DIR = (math.cos(math.radians(GRIP_A)), math.sin(math.radians(GRIP_A)))
 META = {'kind': 'pistol', 'client': {'magDir': [0, round(MAG_DIR[1], 3), round(-MAG_DIR[0], 3)]}}
 
-SIGHT_V = 15.0                      # front blade top = rear notch bottom
+SIGHT_V = 15.0                      # front blade top; the rear notch bottoms out 1 mm below it so the blade shows
 
 
 def spline(pts, step=0.8):
@@ -100,13 +100,13 @@ def build(g):
     g.cyl(121, 122.8, 4.52, 'black', at=(0, 0), seg=16)        # dark bore
     blade = [(106.5, 5.0), (120.3, 5.0), (120.3, 9.6), (119.2, 11.6), (117.6, 13.3), (115.6, 14.5), (113.2, 15.0),
              (111.6, 15.0), (110.6, 12.0), (108.4, 8.4)]
-    g.extrude(blade, width=3.2, mat='blued', bevel=0.4, name='frontsight')
+    g.extrude(blade, width=1.8, mat='blued', bevel=0.3, name='frontsight')
     g.extrude([(105.8, 4.0), (121, 4.0), (121, 7.6), (107.5, 7.6)], width=7.0, mat='blued', bevel=0.5)
 
-    # ---------------------------------------------------------------- rear sight (U notch, bottom on the sight line)
+    # ---------------------------------------------------------------- rear sight (U notch, bottom under the sight line)
     rs = g.extrude([(-70.6, 11.0), (-62.4, 11.0), (-63.6, 14.4, 0.8), (-65.6, 16.0, 0.6), (-70.6, 16.0, 0.4)],
                    width=12.0, mat='blued', bevel=0.4, name='rearsight')
-    notch = [(-1.3, SIGHT_V), (1.3, SIGHT_V), (1.3, 18), (-1.3, 18)]
+    notch = [(-1.3, SIGHT_V - 1), (1.3, SIGHT_V - 1), (1.3, 18), (-1.3, 18)]
     g.cut(rs, g.extrude(notch, -75, -58, plane='front', cutter=True, bevel=0))
 
     # ---------------------------------------------------------------- frame

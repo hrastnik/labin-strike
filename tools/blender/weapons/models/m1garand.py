@@ -222,7 +222,7 @@ def build(g):
         g.cut(e, g.cyl(-10, 10, 1.6, axis='w', at=(727, 24.2), cutter=True, seg=12, chamfer=0))
     g.box(714.5, 741.5, 5.5, 12.5, width=11.2, mat='park', bevel=0.8)
     post = [(724.2, 11), (729.8, 11), (729.4, SIGHT_V - 0.3), (729, SIGHT_V), (725, SIGHT_V), (724.6, SIGHT_V - 0.3)]
-    g.extrude(post, width=2.1, mat='park', bevel=0.25, name='post')
+    g.extrude(post, width=1.3, mat='park', bevel=0.2, name='post')
     screw(g, 728, 8.8, 5.6, r=1.6, h=0.6, side=1, ang=80)
     # stacking swivel under the gas cylinder (folded)
     g.lathe([(660, 0), (660, 9.4), (668, 9.4), (668, 0)], 'park', at=(gas_v, 0), seg=24, name='stackband')

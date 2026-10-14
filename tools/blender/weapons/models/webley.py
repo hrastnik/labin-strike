@@ -17,7 +17,8 @@ from ..lib import arc, offset_poly, section
 REF = 'webley'
 META = {'kind': 'pistol', 'magHidden': True, 'client': {'magDir': [0, -0.3, 1], 'magHidden': True}}
 
-SIGHT_V = 17.4                      # front blade top = bottom of the V notch in the latch top
+SIGHT_V = 19.8                      # front blade top (a game-tall blade); the V notch in the latch bottoms out 2.5 mm
+                                    # below it so most of the blade shows
 HINGE = (33.0, -32.5)               # barrel joint pin
 CYL_V = -14.9                       # cylinder axis (the top chamber is on the bore)
 CYL_R = 21.3
@@ -118,9 +119,10 @@ def build(g):
         g.extrude([(-31.6, -8.0), (-27.5, -9.4, 1.5), (-24.4, -6.0), (-22.6, 12.0), (-22.6, 16.0), (-31.6, 16.0)],
                   7.4 * s if s > 0 else -10.6, 10.6 if s > 0 else -7.4, FIN, bevel=0.8, name='latcharm')
         screw(g, -26.7, -2.1, 10.6 * s, 2.0)
-    lt = g.extrude([(-31.6, 12.0), (-22.6, 12.0), (-22.6, 17.4, 1.0), (-24.4, 19.2, 1.0), (-29.6, 19.2, 1.5),
-                    (-31.6, 16.8, 1.5)], width=21.2, mat=FIN, bevel=0.8, name='latch')
-    g.cut(lt, g.extrude([(-2.2, 20.5), (2.2, 20.5), (0, SIGHT_V)], -40, -15, plane='front', cutter=True, bevel=0))
+    lt = g.extrude([(-31.6, 12.0), (-22.6, 12.0), (-22.6, 19.8, 1.0), (-24.4, 21.6, 1.0), (-29.6, 21.6, 1.5),
+                    (-31.6, 19.2, 1.5)], width=21.2, mat=FIN, bevel=0.8, name='latch')
+    g.cut(lt, g.extrude([(-2.4, 23.0), (2.4, 23.0), (0.3, SIGHT_V - 2.5), (-0.3, SIGHT_V - 2.5)], -40, -15, plane='front',
+                        cutter=True, bevel=0))
     # trigger: crescent between two fitted circles, tip pointing back
     trig = (arc(2.0, -66.0, 17.4, 110, 256, n=18) + [(-1.4, -82.1)] + arc(2.5, -67.2, 14.1, 250, 102, n=15)
             + [(-0.4, -48.6), (-4.8, -48.6)])
@@ -178,7 +180,7 @@ def build(g):
                    (161.5, 14.6), (165.0, 11.8), (168.0, 10.0), (168.0, 9.0)], width=6.4, mat=FIN, bevel=0.5,
                   name='ramp')
         g.extrude([(142.0, 15.0), (142.6, SIGHT_V - 0.3), (143.4, SIGHT_V), (155.6, SIGHT_V), (158.4, 16.6),
-                   (158.4, 15.0)], width=2.6, mat=FIN, bevel=0.3, name='frontsight')
+                   (158.4, 15.0)], width=1.5, mat=FIN, bevel=0.3, name='frontsight')
         for s in (1, -1):
             g.lathe([(3.2 * s, 0), (3.2 * s, 1.3), (3.6 * s, 1.1), (3.7 * s, 0)], 'bright', axis='w', at=(151.0, 14.3),
                     seg=10)

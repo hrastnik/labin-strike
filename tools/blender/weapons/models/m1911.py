@@ -13,7 +13,7 @@ GRIP_A = -108.0                     # grip / magazine axis (deg from +u)
 GDU, GDV = math.cos(math.radians(GRIP_A)), math.sin(math.radians(GRIP_A))
 META = {'kind': 'pistol', 'client': {'magDir': [0, round(GDV, 3), round(-GDU, 3)]}}
 
-SIGHT_V = 12.3                      # front blade top = rear notch bottom
+SIGHT_V = 12.3                      # front blade top; the rear notch bottoms out 1 mm below it so the blade shows
 FIN = 'park'
 
 
@@ -87,10 +87,10 @@ def build(g):
     # ---------------------------------------------------------------- sights
     blade = [(109.4, 10.2), (120.6, 10.2), (120.0, 11.0), (117.6, 12.1), (114.6, SIGHT_V), (112.0, 11.9),
              (110.4, 11.0)]
-    g.extrude(blade, width=2.6, mat=FIN, bevel=0.3, name='frontsight')
+    g.extrude(blade, width=1.5, mat=FIN, bevel=0.3, name='frontsight')
     rs = g.extrude([(-52.6, 10.2), (-42.4, 10.2), (-44.6, 13.2, 0.8), (-46.6, 15.5, 0.5), (-49.2, 15.5, 0.5),
                     (-51.2, 13.2, 0.8)], width=11.0, mat=FIN, bevel=0.4, name='rearsight')
-    g.cut(rs, g.extrude([(-1.2, SIGHT_V), (1.2, SIGHT_V), (1.4, 17), (-1.4, 17)], -55, -40, plane='front',
+    g.cut(rs, g.extrude([(-1.2, SIGHT_V - 1), (1.2, SIGHT_V - 1), (1.4, 17), (-1.4, 17)], -55, -40, plane='front',
                         cutter=True, bevel=0))
 
     # ---------------------------------------------------------------- frame

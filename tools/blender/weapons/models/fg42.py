@@ -109,7 +109,7 @@ def build(g):
         g.extrude([(464, 26), (479, 26), (479, 31.5), (476, 32), (466, 30.5)], w0, w1, 'phosphate', bevel=0.4)
     post = [(450, 26), (458, 26), (457, 31), (455.4, 40), (455.2, SIGHT_V), (452.8, SIGHT_V), (452.6, 40),
             (451, 31)]
-    g.extrude(post, width=3.0, mat='blued', bevel=0.3, name='post')
+    g.extrude(post, width=1.8, mat='blued', bevel=0.3, name='post')
 
     # ---------------------------------------------------------------- muzzle brake (annular grooves)
     prof = [(503, 0), (503, 12.6), (512, 12.6)]

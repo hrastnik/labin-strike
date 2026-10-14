@@ -16,7 +16,7 @@ REF = 'luger'
 GRIP_A = -120.3                                      # magazine / grip axis (deg from +u)
 MAG_DIR = (math.cos(math.radians(GRIP_A)), math.sin(math.radians(GRIP_A)))
 META = {'kind': 'pistol', 'client': {'magDir': [0, round(MAG_DIR[1], 3), round(-MAG_DIR[0], 3)]}}
-SIGHT_V = 16.2                                       # top of the front blade = bottom of the rear V notch
+SIGHT_V = 16.2                                       # top of the front blade; the rear V bottoms out 1 mm below it
 KNOB = (-57.0, 8.5)                                  # toggle knuckle (knurled knobs)
 MAG_TOP = (-27.5, -13.0)
 
@@ -158,7 +158,7 @@ def build(g):
     g.extrude([(108.6, 6.0), (122.4, 6.0), (122.0, 8.4), (109.4, 8.4)], width=7.5, mat='blued', bevel=0.5)
     blade = [(109.6, 8.0), (122.6, 8.0), (121.6, 9.6), (120.2, 11.6), (118.6, 13.6), (117.0, 15.3), (115.6, SIGHT_V),
              (114.0, SIGHT_V), (112.6, 14.6), (111.0, 11.6)]
-    g.extrude(blade, width=2.6, mat='blued', bevel=0.4, name='frontsight')
+    g.extrude(blade, width=1.5, mat='blued', bevel=0.3, name='frontsight')
 
     # ---------------------------------------------------------------- toggle = 'bolt'
     with g.part('bolt'):
@@ -176,7 +176,8 @@ def build(g):
                   name='rearlink')
         rs = g.extrude([(-90.8, 14.3), (-85.6, 14.3), (-86.2, 16.8, 0.6), (-87.6, 18.0, 0.5), (-89.6, 18.0, 0.5),
                         (-90.6, 16.9)], width=6.0, mat='blued', bevel=0.3, name='rearsight')
-        g.cut(rs, g.extrude([(0, SIGHT_V), (2.2, 19), (-2.2, 19)], -95, -84, plane='front', cutter=True, bevel=0))
+        g.cut(rs, g.extrude([(0.3, SIGHT_V - 1), (2.4, 19), (-2.4, 19), (-0.3, SIGHT_V - 1)], -95, -84, plane='front',
+                            cutter=True, bevel=0))
         # knuckle with the knurled knobs
         g.cyl(-12.0, 12.0, 6.0, 'blued', axis='w', at=KNOB, seg=24)
         for s in (1, -1):
