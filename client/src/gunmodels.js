@@ -3,6 +3,7 @@
 // and anchor points the viewmodel needs (muzzle, sight height, hand positions, magazine, bolt, feed cover...).
 import * as THREE from 'three'
 import { applyWeaponModel, modelClone } from './weaponmodels.js'
+import { buildFPArms, buildFPFist } from './soldiermodels.js'
 
 function mat (color, opts = {}) {
   return new THREE.MeshStandardMaterial({ color, roughness: 0.72, metalness: 0.0, flatShading: true, ...opts })
@@ -815,13 +816,13 @@ function pistolArms (root, sleeveM) {
   return arms
 }
 
-// gun + arms rooted for the first-person view
-export function buildViewmodel (id, sleeveColor) {
+// gun + arms rooted for the first-person view (modelled sleeves and fists from soldiers.glb, else procedural ones)
+export function buildViewmodel (id, sleeveColor, team = 'allies') {
   const spec = buildGun(id)
   const root = new THREE.Group()
   root.add(spec.gun)
   const sleeve = makeSleeve(sleeveColor)
-  spec.arms = spec.kind === 'pistol' ? pistolArms(root, sleeve) : rifleArms(root, sleeve, spec)
+  spec.arms = buildFPArms(root, team, spec) || (spec.kind === 'pistol' ? pistolArms(root, sleeve) : rifleArms(root, sleeve, spec))
   spec.root = root
   if (spec.magHidden) spec.mag.visible = false
   return spec
@@ -846,11 +847,12 @@ export function buildGrenade () {
 }
 
 // right hand holding a grenade by the handle, for the first-person throw
-export function buildGrenadeViewmodel (sleeveColor) {
+export function buildGrenadeViewmodel (sleeveColor, team = 'allies') {
   const root = new THREE.Group()
   const nade = buildGrenade()
   nade.position.y = 0.06
   root.add(nade)
+  if (buildFPFist(root, team, V(0, -0.045, 0), V(0, 1, 0), V(0.1, -0.32, 0.3))) return { root, nade }
   const h = hand(0, -0.06, 0.022, -Math.PI / 2, M.skin, root)
   h.rotation.y = Math.PI
   limb([0.005, -0.1, 0.03], [0.06, -0.3, 0.12], 0.028, 0.036, M.skin, root)
@@ -903,6 +905,7 @@ export function buildKnifeViewmodel (team, sleeveColor) {
   const root = new THREE.Group()
   const knife = buildKnife(team)
   root.add(knife)
+  if (buildFPFist(root, team, V(0, 0, 0.004), V(0, 0, -1), V(0.12, -0.3, 0.42))) return { root, knife }
   const h = hand(0.004, -0.004, 0.004, 0, M.skin, root)
   h.rotation.z = Math.PI / 2
   limb([0.012, -0.012, 0.04], [0.09, -0.12, 0.34], 0.028, 0.036, M.skin, root)

@@ -17,6 +17,7 @@ import { loadCats } from './cats.js'
 import { loadTanks } from './tanks.js'
 import { loadBikes } from './bikes.js'
 import { loadWeaponModels } from './weaponmodels.js'
+import { loadSoldierModels } from './soldiermodels.js'
 import { Input } from './input.js'
 import { LocalPlayer } from './player.js'
 import { WeaponSystem } from './weapons.js'
@@ -929,6 +930,8 @@ async function boot () {
     progress(0.05, 'Initialising physics…')
     const weaponModels = loadWeaponModels('/assets/weapons/weapons.glb')
       .catch((err) => console.warn('weapon models unavailable, using procedural ones', err))
+    const soldierModels = loadSoldierModels('/assets/soldiers/soldiers.glb')
+      .catch((err) => console.warn('soldier models unavailable, using procedural ones', err))
     await RAPIER.init()
     progress(0.1, 'Loading map…')
     const buffer = await fetchMap('/assets/maps/parking_lot.glb', (p) => progress(0.1 + p * 0.75))
@@ -948,6 +951,7 @@ async function boot () {
     tanks = await loadTanks(scene, RAPIER, world)
     progress(0.99, 'Arming…')
     await weaponModels // before anything builds a weapon, grenade or knife
+    await soldierModels // before any soldier, rider or first-person arm
     bikes = await loadBikes('/assets/bikes/bikes.glb', scene, RAPIER, world) // its riders are soldiers, who carry a weapon
     fitSunToBounds(sun, mapData.bounds)
     // the map and the parked cars never move: their shadows are rendered once
@@ -1013,6 +1017,7 @@ function frame () {
   }
   grenades?.update(dt, (pos, impact) => audio.nadeBounce(pos, Math.min(1, impact / 10)))
   camera.updateMatrixWorld()
+  if (camOverride && G.state === 'playing') { camera.position.set(...camOverride.pos); camera.lookAt(...camOverride.look) }
   cars?.cull(camera)
   renderer.clear()
   renderer.render(scene, camera)
@@ -1021,7 +1026,7 @@ function frame () {
   input.endFrame()
 }
 
-let camOverride = null   // test helper (window.__labin.cam): fixed menu camera
+let camOverride = null   // test helper (window.__labin.cam): fixed camera, in the menu or in game
 
 function updateMenuCamera (dt) {
   if (!mapData) return
@@ -1370,7 +1375,8 @@ function updateViewmodel (dt, ws) {
     mag: ws.clip.mag,
     lookDX,
     lookDY,
-    alive: player.alive
+    alive: player.alive,
+    ...G.vmPose
   })
 }
 
@@ -1573,9 +1579,13 @@ function updateObjectives (now, live, acting, extra = '', team = G.team) {
 // debug/verification hook (read-only snapshot of game state)
 window.__labin = {
   viewmodel: (v) => { viewmodel.visible = !!v },
+  // test helper: view the first-person arms and gun from pos looking at look (viewmodel camera space; null resets)
+  vmcam: (pos, look) => { viewmodel.debugView = pos ? { pos, look } : null },
+  // test helper: hold the first-person animation at a point, e.g. { throwFrac: 0.3 } or { knifeFrac: 0.5 } (null releases)
+  vmpose: (pose) => { G.vmPose = pose || undefined },
   // test helper: which first-person models are built, and whether they come from weapons.glb
   viewmodels: () => Object.fromEntries(Object.entries(viewmodel.models).map(([id, m]) => [id, !!m.modelled])),
-  // test helper: pin the menu camera at pos looking at look (null restores the orbit)
+  // test helper: pin the camera at pos looking at look, in the menu or in game (null restores it)
   cam: (pos, look) => { camOverride = pos ? { pos, look } : null },
   // test helper: start (true) / stop and return (false) the per-frame camera trace
   trace: (on) => { const t = G.trace; G.trace = on ? [] : null; return t },

@@ -10,3 +10,6 @@ __pycache__/
 *.pyc
 tools/blender/weapons/ref/
 tools/blender/weapons/tex/
+tools/blender/soldiers/out/
+tools/blender/soldiers/tex/
+*.blend1

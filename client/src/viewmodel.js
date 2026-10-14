@@ -115,7 +115,7 @@ export class Viewmodel {
   model (id) {
     let m = this.models[id]
     if (!m) {
-      m = buildViewmodel(id, UNIFORM[this.team] || UNIFORM.allies)
+      m = buildViewmodel(id, UNIFORM[this.team] || UNIFORM.allies, this.team)
       m.root.visible = false
       m.root.traverse((o) => { o.frustumCulled = false })
       this.holder.add(m.root)
@@ -349,7 +349,7 @@ export class Viewmodel {
   poseGrenade (tf) {
     if (tf < 0) { if (this.nadeVM) this.nadeVM.root.visible = false; return }
     if (!this.nadeVM) {
-      this.nadeVM = buildGrenadeViewmodel(UNIFORM[this.team] || UNIFORM.allies)
+      this.nadeVM = buildGrenadeViewmodel(UNIFORM[this.team] || UNIFORM.allies, this.team)
       this.nadeVM.root.traverse((o) => { o.frustumCulled = false })
       this.holder.add(this.nadeVM.root)
     }
@@ -401,6 +401,14 @@ export class Viewmodel {
     }
     const view = this.models[this.current]?.adsViewFov
     this.camera.fov = view ? fov + (view - fov) * this.ads : fov
+    // test helper: look at the arms and gun from elsewhere (__labin.vmcam)
+    if (this.debugView) {
+      this.camera.position.fromArray(this.debugView.pos)
+      this.camera.lookAt(...this.debugView.look)
+    } else if (this.camera.position.lengthSq()) {
+      this.camera.position.set(0, 0, 0)
+      this.camera.quaternion.identity()
+    }
     this.camera.updateProjectionMatrix()
     renderer.clearDepth()
     renderer.render(this.scene, this.camera)
