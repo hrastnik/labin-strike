@@ -79,8 +79,8 @@ def build(g):
         g.extrude(cheek, s * 3.6, s * 6.8, 'park', bevel=0.4, name='cheek')
     ap = g.extrude([(7.4, 14), (10.6, 14), (10.6, 26.5), (9.9, 28.6, 0.6), (8.1, 28.6, 0.6), (7.4, 26.5)],
                    width=9.4, mat='park', bevel=0.3, name='aperture')
-    g.cut(ap, g.cyl(5, 13, 1.15, at=(SIGHT_V, 0), seg=16, cutter=True, chamfer=0))
-    g.lathe([(10.5, 1.15), (10.5, 2.6), (11.0, 2.6), (11.0, 1.15)], 'park', at=(SIGHT_V, 0), seg=16, closed=True,
+    g.cut(ap, g.cyl(5, 13, 2.0, at=(SIGHT_V, 0), seg=16, cutter=True, chamfer=0))   # game-sized peep
+    g.lathe([(10.5, 2.0), (10.5, 3.2), (11.0, 3.2), (11.0, 2.0)], 'park', at=(SIGHT_V, 0), seg=16, closed=True,
             name='peep')
     # windage drum on the right, screw end on the left
     drum = g.lathe([(6.8, 0), (6.8, 4.9), (7.3, 5.4), (11.2, 5.4), (11.7, 4.9), (11.7, 0)], 'park', axis='w',
@@ -119,7 +119,7 @@ def build(g):
     g.cut(fs, g.box(538, 566, 13.0, 25, -1.6, 1.6, cutter=True, bevel=0),
           g.cyl(-8, 8, 1.0, axis='w', at=(552, 10.5), seg=12, cutter=True, chamfer=0))
     g.extrude([(549.0, 12), (556.0, 12), (556.0, SIGHT_V - 0.4), (555.2, SIGHT_V), (550.6, SIGHT_V),
-               (549.0, SIGHT_V - 1.6)], width=1.8, mat='park', bevel=0.2, name='blade')
+               (549.0, SIGHT_V - 1.6)], width=1.2, mat='park', bevel=0.2, name='blade')
     pin(g, 552, 10.5, 4.7, r=0.95, h=0.2)
 
     # ---------------------------------------------------------------- trigger housing, guard, trigger

@@ -321,6 +321,9 @@ export class Bot {
     p.posAt = now
     p.crouch = m.crouched
     p.reloading = !!this.reloadUntil
+    // (only for show: others see the gun raised to the eye) rifles are aimed at a visible target, automatics only
+    // when standing to fire, as tryFire's spread assumes
+    p.ads = this.visible && !this.reloadUntil && (this.wdef.action !== 'auto' || (!wishX && !wishZ))
     p.slot = 0
   }
 

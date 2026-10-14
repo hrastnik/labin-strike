@@ -10,7 +10,8 @@ from ..lib import arc, rrect, section
 REF = 'kar98k'
 META = {'kind': 'rifle', 'magHidden': True}
 
-SIGHT_V = 21.5        # sight line: top of the front blade = bottom of the rear notch
+SIGHT_V = 21.5        # sight line: top of the front blade; the rear notch bottoms out NOTCH_DROP below it
+NOTCH_DROP = 2.0      # so the tip of the blade shows in the V (the game's eye sits exactly on the sight line)
 REAR_U = 252.0        # rear notch
 
 
@@ -170,20 +171,22 @@ def build(g, scoped=False):
     g.tube(745, 755.8, 4.6, 4.0, 'black', seg=16)     # bore
 
     # ---------------------------------------------------------------- rear sight (tangent leaf)
-    base = [(244, 6), (317, 6), (317, 19.0), (306, 19.8, 3), (258, 16.2, 6), (246, 13.6, 3)]
+    base = [(244, 6), (317, 6), (317, 18.6), (306, 18.8, 3), (258, 16.2, 6), (246, 13.6, 3)]
     g.extrude(base, width=23, mat='blued', bevel=0.8, name='rsbase')
-    g.lathe([(-11.5, 0), (-11.5, 5.4), (11.5, 5.4), (11.5, 0)], 'blued', axis='w', at=(325, 18.8), seg=20)  # hinge
-    g.extrude([(316, 9), (333, 9), (333, 17.5), (329, 23.0, 5), (319, 23.6, 4), (316, 19)], width=19, mat='blued',
+    # everything ahead of the notch stays clear of the line from the eye through the notch bottom to the blade
+    g.lathe([(-11.5, 0), (-11.5, 5.4), (11.5, 5.4), (11.5, 0)], 'blued', axis='w', at=(325, 13.0), seg=20)  # hinge
+    g.extrude([(316, 9), (333, 9), (333, 17.5), (329, 18.4, 3), (319, 18.6, 3), (316, 18.4)], width=19, mat='blued',
               bevel=0.6)
-    leaf = [(255.5, 19.6), (325, 20.4), (326, 22.0, 1), (264, 21.0), (257, 21.1)]
+    leaf = [(255.5, 17.8), (325, 18.2), (326, 18.8, 1), (264, 18.6), (257, 18.7)]
     g.extrude(leaf, width=15, mat='blued', bevel=0.4, name='leaf')
-    # notch plate at the rear end: notch bottom exactly on the sight line
+    # notch plate at the rear end: an open V, its bottom just below the sight line
     notch = g.extrude([(249.5, 17.2), (256.5, 17.2), (256.5, SIGHT_V + 2.4, 0.6), (249.5, SIGHT_V + 2.4, 0.6)],
                       width=16, mat='blued', bevel=0.3, name='notch')
-    g.cut(notch, g.extrude([(-1.2, SIGHT_V + 3), (1.2, SIGHT_V + 3), (0.15, SIGHT_V), (-0.15, SIGHT_V)], 246, 260,
+    nb = SIGHT_V - NOTCH_DROP
+    g.cut(notch, g.extrude([(-2.4, SIGHT_V + 3), (2.4, SIGHT_V + 3), (0.3, nb), (-0.3, nb)], 246, 260,
                            plane='front', cutter=True, bevel=0))
-    # slider (set to the battle-sight position): stays below the sight line
-    g.extrude([(262, 14), (277, 14), (277, SIGHT_V - 0.5, 1), (262, SIGHT_V - 0.5, 1)], width=19.5, mat='blued',
+    # slider (set to the battle-sight position): stays below the notch
+    g.extrude([(262, 14), (277, 14), (277, nb - 0.6, 1), (262, nb - 0.6, 1)], width=19.5, mat='blued',
               bevel=0.5, name='slider')
     for s in (1, -1):
         g.lathe([(s * 9.7, 0), (s * 9.7, 2.6), (s * 11.4, 2.4), (s * 11.6, 0)], 'blued', axis='w', at=(269.5, 17),
@@ -213,8 +216,15 @@ def build(g, scoped=False):
     # ---------------------------------------------------------------- front sight
     g.lathe([(712, 0), (712, 8.6), (713, 9.6), (745, 9.6), (746, 8.6), (746, 0)], 'blued', seg=32, name='fsbase')
     g.extrude([(718, 6), (744, 6), (744, 12.6, 1), (722, 13.2, 1)], width=11, mat='blued', bevel=0.5)
-    g.extrude([(-2.7, 12.5), (2.7, 12.5), (0.45, SIGHT_V), (-0.45, SIGHT_V)], 727.5, 737.5, 'blued', plane='front',
+    g.extrude([(-1.7, 12.5), (1.7, 12.5), (0.35, SIGHT_V), (-0.35, SIGHT_V)], 727.5, 737.5, 'blued', plane='front',
               bevel=0.25, name='blade')
+    # sheet-steel hood over the blade, open at the bottom where it clips onto the base
+    hc, ri, ro = SIGHT_V - 1.0, 7.0, 7.8
+    outer = [(ro, 6.0)] + [(ro * math.cos(math.radians(a)), hc + ro * math.sin(math.radians(a))) for a in range(0, 181, 10)] \
+        + [(-ro, 6.0)]
+    inner = [(-ri, 6.0)] + [(ri * math.cos(math.radians(a)), hc + ri * math.sin(math.radians(a))) for a in range(180, -1, -10)] \
+        + [(ri, 6.0)]
+    g.extrude(outer + inner, 719, 742, 'blued', plane='front', bevel=0.3, name='hood')
 
     # ---------------------------------------------------------------- bolt (rotates about the bore, pulls back)
     with g.part('bolt'):

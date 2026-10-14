@@ -11,7 +11,8 @@ from .kar98k import cartridge, sphere, stripper_clip
 REF = 'm1903'
 META = {'kind': 'rifle', 'magHidden': True}
 
-SIGHT_V = 29.5        # sight line: bottom of the battle-sight notch = top of the front blade
+SIGHT_V = 29.5        # sight line: top of the front blade; the battle-sight notch bottoms out NOTCH_DROP below it
+NOTCH_DROP = 2.0      # so the blade's tip shows in the notch (the game's eye sits exactly on the sight line)
 REAR_U = 214.0        # rear (battle-sight) notch
 
 
@@ -149,7 +150,7 @@ def build(g, scoped=False):
         g.extrude([(737, 8), (747, 8), (749, 22), (746, 22)], width=7, mat='blued', plane='side', bevel=0.5)
         g.extrude([(746, 7), (766, 7), (766, 25.5, 2), (763, 27.4, 1.5), (751, 27.4, 1.5), (748.5, 25)], width=7,
                   mat='blued', plane='side', bevel=0.7, name='fs_stud')
-        g.extrude([(-1.4, 25), (1.4, 25), (0.55, SIGHT_V), (-0.55, SIGHT_V)], 751.5, 763.5, 'blued', plane='front',
+        g.extrude([(-0.9, 25), (0.9, 25), (0.35, SIGHT_V), (-0.35, SIGHT_V)], 751.5, 763.5, 'blued', plane='front',
                   bevel=0.2, name='fs_blade')
         # ------------------------------------------------------------ model 1905 rear sight
         g.extrude([(185, -4.6), (270, -4.6), (270, 19.8, 1), (186, 19.8, 1)], width=22, mat='blued', plane='side',
@@ -159,11 +160,12 @@ def build(g, scoped=False):
             g.box(192, 269.5, 19.8, 27.2, w0=min(s * 4.6, s * 7.2), w1=max(s * 4.6, s * 7.2), mat='blued',
                   bevel=0.4)
         g.box(192, 198, 19.8, 27.2, width=14.4, mat='blued', bevel=0.4)
-        g.box(262, 269.5, 19.8, 27.2, width=14.4, mat='blued', bevel=0.4)
-        # drift slide with the battle-sight notch at its rear (notch bottom exactly on the sight line)
-        g.box(214.5, 222, 19.5, 28.6, width=17.5, mat='blued', bevel=0.5, name='rs_slide')
-        g.extrude([(-8.7, 24), (8.7, 24), (8.7, SIGHT_V + 1.8), (1.5, SIGHT_V + 1.8), (0, SIGHT_V),
-                   (-1.5, SIGHT_V + 1.8), (-8.7, SIGHT_V + 1.8)], 212, 215, 'blued', plane='front', bevel=0,
+        g.box(262, 269.5, 19.8, 26.4, width=14.4, mat='blued', bevel=0.4)
+        # drift slide with the battle-sight notch at its rear; the slide stays under the line through the notch
+        nb = SIGHT_V - NOTCH_DROP
+        g.box(214.5, 222, 19.5, nb - 0.6, width=17.5, mat='blued', bevel=0.5, name='rs_slide')
+        g.extrude([(-8.7, 24), (8.7, 24), (8.7, SIGHT_V + 1.8), (2.4, SIGHT_V + 1.8), (0.3, nb), (-0.3, nb),
+                   (-2.4, SIGHT_V + 1.8), (-8.7, SIGHT_V + 1.8)], 212, 215, 'blued', plane='front', bevel=0,
                   name='rs_notch')
         g.cyl(8.7, 12.0, 4.4, 'blued', axis='w', at=(217.5, 21.5), seg=14)          # slide binding screw
         g.lathe([(11, 0), (11, 7.4), (14.5, 7.4), (15.5, 6.4), (15.5, 0)], 'blued', axis='w', at=(261.5, 13.4),

@@ -1,9 +1,11 @@
-// Remote players: procedural low-poly soldiers, snapshot interpolation and simple procedural animation.
+// Remote players: Blender-modelled skinned soldiers (procedural box soldiers without soldiers.glb), snapshot
+// interpolation and simple procedural animation.
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { PLAYER, TEAMS } from '@shared/constants.js'
 import { WEAPONS, WEAPON_LIST, KNIFE } from '@shared/weapons.js'
 import { buildGun } from './gunmodels.js'
+import { buildSoldier, aimArm } from './soldiermodels.js'
 
 const STYLE = {
   allies: { uniform: '#6a6f3e', trousers: '#5f6238', webbing: '#b5a477', helmet: '#4f5631', boots: '#4a3524', marker: '#9fc16a' },
@@ -25,6 +27,18 @@ const KNEEL = [{ thigh: 1.6, knee: -1.85, ankle: 0.25 }, { thigh: 0.6, knee: -2.
 const THIGH = 0.45 // hip to knee, knee to ankle
 const SHIN = 0.38
 const ARM_REACH = 0.46 // shoulder to a hand on the bars
+const FIST = 0.075 // modelled soldiers: wrist to the middle of the fist
+const POLE = [new THREE.Vector3(0.75, -1, 0.25), new THREE.Vector3(-0.45, -1, 0.1)] // where the elbows point
+const POLE_ADS = [new THREE.Vector3(1, -0.35, 0.15), new THREE.Vector3(-0.25, -1, -0.1)] // aiming: right elbow up and out
+// modelled soldiers' gun pivot (aim frame) held ready (muzzle a little down) and aimed down the sights (at the eye)
+const STANCE = {
+  rifle: { ready: new THREE.Vector3(0.1, -0.1, -0.24), readyPitch: -0.16, ads: new THREE.Vector3(0.07, 0.19, -0.19) },
+  pistol: { ready: new THREE.Vector3(0.02, -0.17, -0.4), readyPitch: -0.22, ads: new THREE.Vector3(0.025, 0.15, -0.5) }
+}
+const _w = new THREE.Vector3()
+const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a))
+const smoothstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
+const PISTOL_HANDS = [[0.004, -0.075, 0.03], [-0.03, -0.085, 0.0]]
 const _v = new THREE.Vector3()
 const _u = new THREE.Vector3()
 
@@ -42,7 +56,8 @@ function gunTemplate (id) {
       spec.mag.visible = !spec.magHidden
     }
     gun.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.userData.shared = true } })
-    t = { gun, muzzle: spec.muzzle.clone(), pistol: spec.kind === 'pistol' }
+    const pistol = spec.kind === 'pistol'
+    t = { gun, muzzle: spec.muzzle.clone(), pistol, hands: pistol ? PISTOL_HANDS : [spec.rh, spec.lh] }
     gunTemplates.set(id, t)
   }
   return t
@@ -167,13 +182,47 @@ export class Avatar {
     this.flashT = 0
     this.stabT = 0
     this.lastPos = new THREE.Vector3()
+    this.vel = new THREE.Vector2() // ground velocity (x, z), smoothed
+    this.lastYaw = 0
+    this.legYaw = 0 // the legs' heading relative to the body's
+    this.turning = false // stepping round to catch up with the body
+    this.adsK = 0
+    this.sprintK = 0
     this.build()
   }
 
   build () {
-    const st = STYLE[this.team] || STYLE.allies
     const root = new THREE.Group()
     this.root = root
+    const model = buildSoldier(this.team, root)
+    if (model) this.buildModel(model)
+    else this.buildBoxes()
+
+    // long arms are held at the rifle pivot, sidearms out in front (the modelled soldier moves both: stance())
+    this.rifle = pivot(0.06, -0.14, -0.3, this.aim)
+    this.pistol = pivot(0.0, -0.16, -0.5, this.aim)
+    this.guns = new Map()
+    this.weaponId = null
+
+    if (!flashMat) flashMat = flashSprite()
+    this.flash = new THREE.Sprite(flashMat)
+    this.flash.scale.setScalar(0.5)
+    this.flash.visible = false
+    this.flashPivot = new THREE.Group()
+    this.flashPivot.add(this.flash)
+    this.setWeapon('stg44')
+
+    if (this.friendly) {
+      this.tag = nameSprite(this.name, this.tagColor)
+      this.tag.position.set(0, 2.25, 0)
+      root.add(this.tag)
+    }
+  }
+
+  // the procedural stand-in: boxes hung on pivots, merged per pivot
+  buildBoxes () {
+    const st = STYLE[this.team] || STYLE.allies
+    const root = this.root
     const body = pivot(0, 0, 0, root)
     this.body = body
 
@@ -245,25 +294,98 @@ export class Avatar {
     const pivots = []
     root.traverse((o) => { if (o.children.some((c) => c.isMesh)) pivots.push(o) })
     for (const p of pivots) mergeParts(p)
+  }
 
-    // long arms are shouldered at the rifle pivot, sidearms held out in front
-    this.rifle = pivot(0.06, -0.14, -0.3, this.aim)
-    this.pistol = pivot(0.0, -0.16, -0.5, this.aim)
-    this.guns = new Map()
-    this.weaponId = null
+  // the modelled soldier: its bones are the pivots (identity rest rotations), the arms are aimed at the grips by IK
+  buildModel ({ bones, arms, mesh }) {
+    this.mesh = mesh
+    this.body = bones.body
+    this.hips = bones.hips
+    this.legs = ['l', 'r'].map((s) => ({ thigh: bones[`thigh_${s}`], knee: bones[`shin_${s}`], ankle: bones[`foot_${s}`] }))
+    this.torso = bones.torso
+    this.head = bones.head
+    this.aim = bones.aim
+    this.arms = arms
+  }
 
-    if (!flashMat) flashMat = flashSprite()
-    this.flash = new THREE.Sprite(flashMat)
-    this.flash.scale.setScalar(0.5)
-    this.flash.visible = false
-    this.flashPivot = new THREE.Group()
-    this.flashPivot.add(this.flash)
-    this.setWeapon('stg44')
+  // legs: a stride cycle driven by the distance covered (so the feet do not skate), the legs turned towards the
+  // way the soldier is going (side-stepping beyond what the hips can turn), crouch-walking or kneeling when crouched
+  locomote (dt, cr) {
+    const moving = smoothstep(0.35, 1.2, this.speed)
+    let dir = 1
+    let side = 0
+    let target = this.legYaw
+    if (this.speed > 0.35) {
+      let rel = wrap(Math.atan2(-this.vel.x, -this.vel.y) - this.yaw)
+      if (Math.abs(rel) > 1.75) { rel = wrap(rel - Math.PI); dir = -1 } // backing away: legs face forward, stride reversed
+      target = THREE.MathUtils.clamp(rel, -1.05, 1.05)
+      side = Math.sin(rel - target) * 1.6
+      this.turning = false
+    } else if (Math.abs(this.legYaw) > 0.85) this.turning = true // turned on the spot too far: step round
+    if (this.turning) {
+      target = 0
+      if (Math.abs(this.legYaw) < 0.06) this.turning = false
+    }
+    this.legYaw += (target - this.legYaw) * Math.min(1, dt * (this.turning ? 7 : 9))
 
-    if (this.friendly) {
-      this.tag = nameSprite(this.name, this.tagColor)
-      this.tag.position.set(0, 2.25, 0)
-      root.add(this.tag)
+    // stride: one cycle per ~1.3 m walking, longer running; a short shuffle while stepping round
+    const stride = 1.15 + 0.22 * this.speed - 0.4 * cr
+    this.walkPhase += dir * (this.speed * dt / stride) * Math.PI * 2
+    if (this.turning && moving < 0.3) this.walkPhase += dt * 9
+    const amp = Math.max(moving * Math.min(1, this.speed / 4.2 + 0.25), this.turning ? 0.3 : 0)
+    const run = smoothstep(3, 5.5, this.speed)
+    const walkK = (1 - cr) * amp
+    const crawlK = cr * Math.max(amp, this.turning ? 0.3 : 0) // crouch-walking
+    const kneelK = cr - crawlK
+    const ph = this.walkPhase
+
+    for (let i = 0; i < 2; i++) {
+      const L = this.legs[i]
+      const f = ph + (i ? Math.PI : 0)
+      const sw = Math.sin(f)
+      const lift = Math.max(0, Math.cos(f)) ** 1.3 // swing phase: the foot comes through with the knee bent
+      // standing gait
+      const tW = (0.42 + 0.22 * run) * sw
+      const kW = -(0.12 + (0.95 + 0.55 * run) * lift)
+      const aW = -(tW + kW) * 0.65 * (1 - lift) + 0.2 * lift
+      // crouch-walk: low, knees well bent, short steps
+      const tC = 0.95 + 0.4 * sw
+      const kC = -(1.45 + 0.55 * lift)
+      const aC = 0.55 - 0.25 * sw
+      const K = KNEEL[i]
+      L.thigh.rotation.set(tW * walkK + tC * crawlK + K.thigh * kneelK,
+        0, side * 0.32 * sw * Math.max(walkK, crawlK) + (i ? -1 : 1) * 0.04 * crawlK, 'XYZ')
+      L.knee.rotation.x = kW * walkK + kC * crawlK + K.knee * kneelK
+      L.ankle.rotation.x = aW * walkK + aC * crawlK + K.ankle * kneelK
+    }
+    // hips: bob twice a stride, twist and roll with the legs; kneel or crouch-walk heights
+    const bob = -0.035 * walkK * (1 + run) * (1 - Math.cos(2 * ph)) * 0.5
+    this.hips.position.set(0, 0.94 + bob - 0.48 * kneelK - 0.36 * crawlK, 0.12 * kneelK + 0.04 * crawlK)
+    this.hips.rotation.set(0, this.legYaw + 0.16 * Math.sin(ph) * Math.max(walkK, crawlK), 0.05 * Math.cos(ph) * walkK)
+    this.torso.position.copy(this.hips.position)
+    // the upper body leans into a run and counter-swings the hips a little
+    this.torso.rotation.x = -0.35 * kneelK - 0.3 * crawlK - 0.06 * walkK - 0.1 * run * (1 - cr)
+    this.torso.rotation.y = -0.07 * Math.sin(ph) * walkK
+  }
+
+  // gun held ready, aimed down the sights (flags bit 4) or carried while sprinting; both hands follow it every frame
+  stance (dt) {
+    const t = gunTemplate(this.weaponId)
+    const S = t.pistol ? STANCE.pistol : STANCE.rifle
+    const k = Math.min(1, dt * 9)
+    this.adsK += ((this.flags & 4 ? 1 : 0) - this.adsK) * k
+    this.sprintK += (smoothstep(5.3, 6.3, this.speed) * (1 - this.adsK) - this.sprintK) * k
+    const a = this.adsK; const r = this.sprintK
+    const piv = t.pistol ? this.pistol : this.rifle
+    piv.position.lerpVectors(S.ready, S.ads, a)
+    piv.rotation.set(S.readyPitch * (1 - a) - 0.55 * r, 0.3 * r, 0)
+    this.head.rotation.x += 0.2 * a * (t.pistol ? 0.4 : 1)
+    this.head.rotation.z = -0.16 * a * (t.pistol ? 0.3 : 1)
+    piv.updateMatrix()
+    for (let i = 0; i < 2; i++) {
+      const h = t.hands[i]
+      _w.lerpVectors(POLE[i], POLE_ADS[i], a)
+      this.grip(i, _v.set(h[0], h[1], h[2]).applyMatrix4(piv.matrix), _w)
     }
   }
 
@@ -282,6 +404,13 @@ export class Avatar {
     g.add(this.flashPivot)
     this.flashPivot.position.copy(t.muzzle)
     this.flash.scale.setScalar(0.5 * Math.max(0.7, WEAPONS[id].fx.flash))
+  }
+
+  // the fist's middle onto point p (aim frame): the wrist stops short of it on the way back to the shoulder
+  grip (i, p, pole = POLE[i]) {
+    const a = this.arms[i]
+    const w = _u.copy(a.shoulder).sub(p).normalize().multiplyScalar(FIST).add(p)
+    aimArm(a, w, pole, 0.03)
   }
 
   setName (name) {
@@ -393,6 +522,7 @@ export class Avatar {
   // point shoulder i (0 right, 1 left) so its hand lands on the way to `world` (a world-space point; the matrices
   // must be up to date)
   reach (i, world) {
+    if (this.arms) { this.grip(i, this.aim.worldToLocal(_v.copy(world))); return }
     const s = this.shoulders[i]
     const to = this.aim.worldToLocal(_v.copy(world)).sub(s.pivot.position).normalize()
     s.pivot.quaternion.setFromUnitVectors(_u.copy(s.hand).normalize(), to)
@@ -404,35 +534,29 @@ export class Avatar {
   animate (dt) {
     const root = this.root
     root.position.copy(this.pos)
+    // the legs keep their heading in the world while the upper body turns with the view
+    this.legYaw -= wrap(this.yaw - this.lastYaw)
+    this.lastYaw = this.yaw
     root.rotation.y = this.yaw
 
-    const moved = Math.hypot(this.pos.x - this.lastPos.x, this.pos.z - this.lastPos.z)
+    const k10 = Math.min(1, dt * 10)
+    const dx = this.pos.x - this.lastPos.x; const dz = this.pos.z - this.lastPos.z
+    const moved = Math.hypot(dx, dz)
     this.lastPos.copy(this.pos)
-    const inst = dt > 0 ? Math.min(8, moved / dt) : 0
-    this.speed += (inst - this.speed) * Math.min(1, dt * 10)
+    if (dt > 0 && moved < 2) { // (a respawn or teleport is not a step)
+      this.vel.x += (Math.min(8, dx / dt) - this.vel.x) * k10
+      this.vel.y += (Math.min(8, dz / dt) - this.vel.y) * k10
+    }
+    this.speed = this.vel.length()
 
     const c = this.crouched ? 1 : 0
     this.crouch += (c - this.crouch) * Math.min(1, dt * 12)
     const cr = this.crouch
+    this.locomote(dt, cr)
 
-    const sp = Math.min(1, this.speed / 4.5)
-    this.walkPhase += dt * (3 + this.speed * 1.7) * (sp > 0.05 ? 1 : 0)
-    const swing = Math.sin(this.walkPhase) * 0.65 * sp * (1 - 0.5 * cr)
-    // kneel on the right knee with the left foot planted, low enough to fill the crouched hitbox
-    this.hips.position.set(0, 0.94 - 0.48 * cr, 0.12 * cr)
-    this.torso.position.copy(this.hips.position)
-    for (let i = 0; i < 2; i++) {
-      const s = i === 0 ? swing : -swing
-      const L = this.legs[i]
-      const pose = KNEEL[i]
-      L.thigh.rotation.x = s + pose.thigh * cr
-      L.knee.rotation.x = -Math.max(0, -s) * 0.9 * sp + pose.knee * cr
-      L.ankle.rotation.x = pose.ankle * cr
-    }
-    this.torso.rotation.x = -0.35 * cr - 0.08 * sp
     this.aim.rotation.x = this.pitch - this.torso.rotation.x
     this.head.rotation.x = this.pitch * 0.4
-    this.torso.rotation.y = Math.sin(this.walkPhase) * 0.06 * sp
+    this.head.rotation.z = 0
     this.torso.rotation.z = -LEAN_TILT * this.lean
     // knife: twist the shoulders into the stab and swing the arms down through it
     if (this.stabT > 0) {
@@ -441,6 +565,7 @@ export class Avatar {
       this.torso.rotation.y -= 0.5 * lunge
       this.aim.rotation.x -= 0.45 * lunge
     }
+    if (this.arms) this.stance(dt)
 
     this.setWeapon(WEAPON_LIST[this.weapon] || 'stg44')
     if (this.flashT > 0) {
@@ -478,6 +603,7 @@ export class Avatar {
 
   dispose () {
     this.root.traverse((o) => { if (o.isMesh && !o.userData.shared) o.geometry.dispose() })
+    this.mesh?.skeleton.dispose()
     if (this.tag) { this.tag.material.map.dispose(); this.tag.material.dispose() }
     this.root.parent?.remove(this.root)
   }

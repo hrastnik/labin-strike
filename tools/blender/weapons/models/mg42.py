@@ -10,7 +10,8 @@ from ..lib import arc, hull_circles, rrect, section
 REF = 'mg42'
 META = {'kind': 'rifle', 'hide_in_ref': [] if os.environ.get('SHOWMAG') else ['mag']}
 
-SIGHT_V = 70.0      # sight line: rear notch bottom = front post top
+SIGHT_V = 70.0      # sight line: top of the front post; the rear notch bottoms out NOTCH_DROP below it
+NOTCH_DROP = 2.0    # so the post's tip shows in the notch (the game's eye sits exactly on the sight line)
 
 
 def screw(g, u, v, w, r=3.0, mat='paint', side=1, slot=False):
@@ -124,16 +125,24 @@ def build(g):
     for u in range(232, 292, 4):
         g.box(u, u + 1.4, 50, 54.2 - (u - 222) * 0.06, width=17, mat='bright', bevel=0)
     g.lathe([(-12, 0), (-12, 7.5), (12, 7.5), (12, 0)], 'paint', axis='w', at=(222, 44), seg=18)   # slider wheel
-    blade = g.extrude([(206, 40), (213, 40), (213, SIGHT_V + 5), (206, SIGHT_V + 5)], width=12, mat='paint',
-                      bevel=0.4, name='rblade')
-    g.cut(blade, g.extrude([(-1.5, SIGHT_V + 6), (1.5, SIGHT_V + 6), (1.2, SIGHT_V), (-1.2, SIGHT_V)], 200, 220,
+    # notch plate at the rear end of the leaf: a short, wide plate on a narrow stem, the slider knobs either side
+    g.extrude([(-2.2, 44), (2.2, 44), (2.2, SIGHT_V - 5), (-2.2, SIGHT_V - 5)], 206, 213, 'paint', plane='front',
+              bevel=0.4, name='rstem')
+    blade = g.extrude([(-9, SIGHT_V - 6, 1), (9, SIGHT_V - 6, 1), (9, SIGHT_V + 3, 1.5), (-9, SIGHT_V + 3, 1.5)], 206, 212,
+                      'paint', plane='front', bevel=0.4, name='rblade')
+    nb = SIGHT_V - NOTCH_DROP
+    g.cut(blade, g.extrude([(-2.8, SIGHT_V + 4), (2.8, SIGHT_V + 4), (0.5, nb), (-0.5, nb)], 200, 220,
                            plane='front', cutter=True, bevel=0))
+    ribs = [(2.2, 0), (2.2, 4.6), (2.8, 5.4), (4.0, 5.4), (4.4, 4.8), (4.8, 5.4), (6.2, 5.4), (6.6, 4.8), (7.0, 5.4),
+            (8.4, 5.4), (9.0, 4.6), (9.0, 0)]
+    g.lathe(ribs, 'paint', axis='w', at=(214, SIGHT_V - 13), seg=20, name='rknob')
+    g.lathe([(-w, r) for w, r in reversed(ribs)], 'paint', axis='w', at=(214, SIGHT_V - 13), seg=20, name='rknob')
     # front: collar on the jacket and the folding post
     g.extrude([(612, 18), (660, 18), (660, 27, 3), (612, 27, 3)], width=30, mat='paint', bevel=0.8, name='fscollar')
     for u in (634, 650):
         both(g, screw, u, 22.5, 15, r=2.0)
     g.extrude([(622, 24), (640, 24), (640, SIGHT_V - 4, 3), (637, SIGHT_V), (632, SIGHT_V), (632, 56),
-               (626, 52), (626, 34), (622, 30)], width=6, mat='paint', bevel=0.4, name='fpost')
+               (626, 52), (626, 34), (622, 30)], width=2.4, mat='paint', bevel=0.3, name='fpost')
 
     # ---------------------------------------------------------------- trigger group, grip, guard
     housing = [(-132, -36), (-36, -36), (-36, -62), (-55, -62), (-108, -60), (-128, -62), (-132, -54)]

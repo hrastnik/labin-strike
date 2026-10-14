@@ -194,7 +194,7 @@ def build(g):
         screw(g, 729.5, 23.5, s * 7.0, r=3.2, h=0.5, side=s, mat='park', ang=70)
     g.extrude([(720, 10), (739, 10), (739, 15), (720, 15)], width=10, mat='park', bevel=0.4, name='bladebase')
     g.extrude([(726, 14), (732.5, 14), (731.5, SIGHT_V - 0.6), (731.0, SIGHT_V), (727.5, SIGHT_V),
-               (727.0, SIGHT_V - 0.6)], width=1.9, mat='park', bevel=0.2, name='blade')
+               (727.0, SIGHT_V - 0.6)], width=1.2, mat='park', bevel=0.2, name='blade')
     pin(g, 735, 12.5, 5.0, r=1.1, h=0.2)
     # barrel stub, bayonet collar, crown
     g.lathe([(700, 0), (700, 9.6), (742, 9.6), (742, 9.0), (752, 9.0), (753, 8.4), (762, 8.4), (763, 7.5),

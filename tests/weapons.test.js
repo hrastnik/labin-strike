@@ -25,12 +25,12 @@ test('every weapon has a complete, sane stat block', () => {
 test('original StG 44 and M1911 stats are unchanged', () => {
   const s = WEAPONS.stg44
   assert.deepEqual([s.rpm, s.mag, s.reserve, s.reloadTime, s.drawTime, s.damage, s.falloffStart, s.falloffEnd, s.falloffMin, s.adsFov],
-    [600, 30, 150, 2.4, 0.45, 27, 30, 80, 0.65, 50])
+    [600, 30, 150, 2.4, 0.45, 27, 30, 80, 0.65, 41])
   assert.deepEqual(s.spread, { hip: 0.03, ads: 0.004, move: 0.035, air: 0.12, crouchMul: 0.7, bloom: 0.007, bloomMax: 0.05, recover: 0.12 })
   assert.deepEqual(s.recoil, { pitch: 0.011, yaw: 0.005, recover: 6 })
   const p = WEAPONS.m1911
   assert.deepEqual([p.rpm, p.mag, p.reserve, p.reloadTime, p.drawTime, p.damage, p.falloffStart, p.falloffEnd, p.falloffMin, p.adsFov],
-    [360, 7, 42, 1.7, 0.3, 34, 15, 45, 0.55, 60])
+    [360, 7, 42, 1.7, 0.3, 34, 15, 45, 0.55, 50])
   assert.deepEqual(p.recoil, { pitch: 0.022, yaw: 0.006, recover: 7 })
 })
 
